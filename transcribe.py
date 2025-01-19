@@ -150,7 +150,8 @@ if __name__ == "__main__":
         input_folder=input_folder_path,
         output_folder="output",
         progress_file="transcription_progress.txt",
-        model_size="large-v3-turbo",
+        #model_size="large-v3-turbo",
+        model_size="deepdml/faster-whisper-large-v3-turbo-ct2",
         device="cuda",         # GPU
         compute_type="float16" # Half-precision
     )
