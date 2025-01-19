@@ -169,3 +169,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+/output
+/videos
+yt-dlp.exe
+videos.json
+transcription_progress.txt
+*.mp3
+cookies.txt
