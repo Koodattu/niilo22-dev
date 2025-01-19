@@ -6,6 +6,7 @@ def create_sentences_from_json(output_folder, output_file):
     """
     Reads JSON files from the specified folder, extracts words,
     and creates a single text file with all the words forming sentences.
+    Each sentence is written on one line, and no empty rows are included.
     """
     all_sentences = []
     json_files = [f for f in os.listdir(output_folder) if f.endswith(".json")]
@@ -31,13 +32,14 @@ def create_sentences_from_json(output_folder, output_file):
                     else:
                         sentence += word + " "
                 
-                # Add the sentence to the collection
-                all_sentences.append(sentence.strip())
+                # Add the sentence to the collection if not empty
+                if sentence.strip():
+                    all_sentences.append(sentence.strip())
             
             # Update the progress bar
             progress_bar.update(1)
     
-    # Write all sentences to the output file
+    # Write all sentences to the output file, one per line
     with open(output_file, 'w', encoding='utf-8') as text_file:
         for sentence in all_sentences:
             text_file.write(sentence + "\n")
