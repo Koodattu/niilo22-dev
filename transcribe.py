@@ -44,7 +44,7 @@ def transcribe_file(
             language="fi",          # Force Finnish
             vad_filter=True,        # Enable VAD
             word_timestamps=True,   # Word-level timestamps
-            # you can tune batch_size for your GPU usage, e.g., batch_size=16
+            beam_size=5,         # Beam search for better accuracy
             batch_size=16
         )
 
@@ -86,7 +86,7 @@ def transcribe_audio_files(
     input_folder: str,
     output_folder: str = "output",
     progress_file: str = "transcription_progress.txt",
-    model_size: str = "large-v3-turbo",
+    model_size: str = "turbo",
     device: str = "cuda",
     compute_type: str = "float16"
 ):
@@ -151,7 +151,7 @@ if __name__ == "__main__":
         output_folder="output",
         progress_file="transcription_progress.txt",
         #model_size="large-v3-turbo",
-        model_size="deepdml/faster-whisper-large-v3-turbo-ct2",
+        model_size="turbo",
         device="cuda",         # GPU
         compute_type="float16" # Half-precision
     )

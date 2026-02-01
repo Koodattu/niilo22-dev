@@ -268,7 +268,8 @@ def download_videos(videos_data: dict, download_format: str):
             cmd = [
                 "./yt-dlp",  # or "yt-dlp" if it's on PATH
                 "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
-				'--cookies', 'cookies.txt',
+				#'--cookies', 'cookies.txt',
+                "--cookies-from-browser", "firefox",
                 "-f", "bestaudio/best",
                 "--extract-audio",
                 "--audio-format", "mp3",
