@@ -270,7 +270,7 @@ def download_videos(videos_data: dict, download_format: str):
                 "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
 				#'--cookies', 'cookies.txt',
                 "--cookies-from-browser", "firefox",
-                "-f", "bestaudio/best",
+                #"-f", "bestaudio/best",
                 "--extract-audio",
                 "--audio-format", "mp3",
                 "--audio-quality", "0",
@@ -282,7 +282,7 @@ def download_videos(videos_data: dict, download_format: str):
                 "./yt-dlp",
                 "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
 				'--cookies', 'cookies.txt',
-                "-f", "bestvideo+bestaudio/best",
+                #"-f", "bestvideo+bestaudio/best",
                 "--merge-output-format", "mp4",
                 f"https://www.youtube.com/watch?v={vid['id']}"
             ]
