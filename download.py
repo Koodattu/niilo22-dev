@@ -270,6 +270,8 @@ def download_videos(videos_data: dict, download_format: str):
                 "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
 				#'--cookies', 'cookies.txt',
                 "--cookies-from-browser", "firefox",
+                "--rm-cache-dir",  # Clear yt-dlp cache to avoid stale data
+                "--extractor-args", "youtube:player_client=ios,web",  # Use web client to avoid age restrictions
                 #"-f", "bestaudio/best",
                 "--extract-audio",
                 "--audio-format", "mp3",
