@@ -1,6 +1,9 @@
 import os
 import json
 import subprocess
+import shutil
+import sys
+import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
@@ -17,6 +20,15 @@ YT_CHANNEL = os.getenv("YT_CHANNEL", "").strip()
 # If you want to override from .env:
 DOWNLOAD_FOLDER = os.getenv("DOWNLOAD_FOLDER", "videos").strip()
 VIDEOS_JSON = "videos.json"
+YT_DLP_RETRY_DELAY_SECONDS = 2
+YT_DLP_RETRYABLE_ERRORS = (
+    "the page needs to be reloaded",
+    "po token",
+    "http error 403",
+    "timed out",
+    "temporarily unavailable",
+    "unable to download",
+)
 
 ###############################################################################
 #                        Utility / Helper Functions
@@ -89,6 +101,123 @@ def get_unix_timestamp_and_date_string(published_at: str):
     unix_timestamp = int(dt.timestamp())
     date_string = dt.strftime('%Y%m%d')
     return unix_timestamp, date_string
+
+
+def resolve_yt_dlp_binary() -> str:
+    """
+    Prefer a bundled yt-dlp binary from the workspace, then fall back to PATH.
+    """
+    workspace_dir = os.path.dirname(os.path.abspath(__file__))
+    local_candidates = [
+        os.path.join(workspace_dir, "yt-dlp.exe"),
+        os.path.join(workspace_dir, "yt-dlp"),
+    ]
+
+    for candidate in local_candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    resolved = shutil.which("yt-dlp")
+    if resolved:
+        return resolved
+
+    raise FileNotFoundError("yt-dlp executable not found in the workspace or on PATH.")
+
+
+def get_cookie_args() -> list[str]:
+    """
+    Use cookies.txt automatically when it exists in the workspace.
+    """
+    cookie_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    if os.path.exists(cookie_file):
+        return ["--cookies", cookie_file]
+    return []
+
+
+def build_common_download_args(output_template: str) -> list[str]:
+    return [
+        resolve_yt_dlp_binary(),
+        "--no-playlist",
+        "--force-ipv4",
+        "--socket-timeout", "30",
+        "--retries", "3",
+        "--fragment-retries", "3",
+        "--extractor-retries", "3",
+        "-o", output_template,
+        *get_cookie_args(),
+    ]
+
+
+def build_download_attempts(download_format: str, output_template: str, video_id: str) -> list[tuple[str, list[str]]]:
+    """
+    Try stable extractor configurations in order.
+    """
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    common_args = build_common_download_args(output_template)
+    stable_extractor_args = "youtube:player_client=android,web"
+    fallback_extractor_args = "youtube:player_client=android,web;youtube:skip=hls,dash"
+
+    if download_format.lower() == "mp3":
+        media_args = [
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+        ]
+        return [
+            (
+                "android-web",
+                common_args + ["--extractor-args", stable_extractor_args] + media_args + [video_url],
+            ),
+            (
+                "android-web-skip-streams",
+                common_args + ["--extractor-args", fallback_extractor_args] + media_args + [video_url],
+            ),
+            (
+                "android-web-refresh-cache",
+                common_args + ["--rm-cache-dir", "--extractor-args", fallback_extractor_args] + media_args + [video_url],
+            ),
+        ]
+
+    return [
+        (
+            "android-web-merged",
+            common_args
+            + ["--extractor-args", stable_extractor_args, "-f", "bv*+ba/b", "--merge-output-format", "mp4", video_url],
+        ),
+        (
+            "android-web-progressive",
+            common_args
+            + ["--extractor-args", fallback_extractor_args, "-f", "best[ext=mp4]/best", "--merge-output-format", "mp4", video_url],
+        ),
+        (
+            "android-web-refresh-cache",
+            common_args
+            + ["--rm-cache-dir", "--extractor-args", fallback_extractor_args, "-f", "best[ext=mp4]/best", "--merge-output-format", "mp4", video_url],
+        ),
+    ]
+
+
+def is_retryable_download_error(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(error_text in lowered for error_text in YT_DLP_RETRYABLE_ERRORS)
+
+
+def run_download_with_fallbacks(download_format: str, output_template: str, video_id: str) -> tuple[bool, str]:
+    attempts = build_download_attempts(download_format, output_template, video_id)
+    last_stderr = ""
+
+    for attempt_index, (attempt_name, cmd) in enumerate(attempts, start=1):
+        print(f"  Attempt {attempt_index}/{len(attempts)} with profile: {attempt_name}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return True, result.stderr
+
+        last_stderr = result.stderr.strip()
+        if attempt_index < len(attempts) and is_retryable_download_error(last_stderr):
+            print("  Retrying with a safer extractor configuration...")
+            time.sleep(YT_DLP_RETRY_DELAY_SECONDS)
+
+    return False, last_stderr
 
 
 ###############################################################################
@@ -263,41 +392,17 @@ def download_videos(videos_data: dict, download_format: str):
         # Otherwise, let's download
         print(f"[{idx}/{total_videos}] Downloading: {vid['name']}")
 
-        if download_format.lower() == "mp3":
-            # Audio only, best quality
-            cmd = [
-                "./yt-dlp",  # or "yt-dlp" if it's on PATH
-                "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
-				#'--cookies', 'cookies.txt',
-                "--cookies-from-browser", "firefox",
-                "--rm-cache-dir",  # Clear yt-dlp cache to avoid stale data
-                "--extractor-args", "youtube:player_client=ios,web",  # Use web client to avoid age restrictions
-                #"-f", "bestaudio/best",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
-                f"https://www.youtube.com/watch?v={vid['id']}"
-            ]
-        else:
-            # mp4 (best video + best audio merged)
-            cmd = [
-                "./yt-dlp",
-                "-o", os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s"),
-				'--cookies', 'cookies.txt',
-                #"-f", "bestvideo+bestaudio/best",
-                "--merge-output-format", "mp4",
-                f"https://www.youtube.com/watch?v={vid['id']}"
-            ]
-
-        ret = subprocess.run(cmd, capture_output=True, text=True)
-        if ret.returncode == 0:
-            print(f"  Download succeeded: {output_base}.{download_format}")
+        output_template = os.path.join(DOWNLOAD_FOLDER, output_base + ".%(ext)s")
+        success, stderr = run_download_with_fallbacks(download_format, output_template, vid["id"])
+        if success:
+            actual_ext = check_existing_file(output_base, DOWNLOAD_FOLDER, download_format) or download_format
+            print(f"  Download succeeded: {output_base}.{actual_ext}")
             vid["downloaded"] = True
             write_videos_json(videos_data)
             completed += 1
         else:
             # Log the error
-            print(f"  Download failed: {vid['name']}\n    {ret.stderr}\n")
+            print(f"  Download failed: {vid['name']}\n    {stderr}\n")
             # Decide if you want to continue or break on failure
             # We'll just continue
 
@@ -338,10 +443,9 @@ def main():
     fetch_new_videos(videos_data)
     print("=" * 60)
 
-    # 3) Ask user if they'd like to download mp3 or mp4
-    #    (Or you could parse sys.argv if you prefer.)
-    choice = ""
-    while choice.lower() not in ["mp3", "mp4"]:
+    # 3) Ask user if they'd like to download mp3 or mp4, unless provided via argv.
+    choice = sys.argv[1].strip().lower() if len(sys.argv) > 1 else ""
+    while choice not in ["mp3", "mp4"]:
         choice = input("Download format? (mp3/mp4): ").strip().lower()
 
     # 4) Download them from oldest to newest
