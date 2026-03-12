@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useDeferredValue, useEffect, useMemo, useState, type FormEvent } from "react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import type { SearchResponse, SearchSnippet, SearchVideoResult } from "./search-types";
@@ -70,6 +70,7 @@ export function SearchExperience() {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSnippetId, setActiveSnippetId] = useState<number | null>(null);
   const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
+  const resultCardRefs = useRef(new Map<string, HTMLElement>());
 
   const deferredResults = useDeferredValue(results);
   const activeResult = deferredResults.find((result) => result.videoId === activeVideoId) ?? deferredResults[0] ?? null;
@@ -114,6 +115,29 @@ export function SearchExperience() {
   useEffect(() => {
     setAutoplayEnabled(initialAutoplayEnabled);
   }, [initialAutoplayEnabled]);
+
+  useEffect(() => {
+    if (!activeResult) {
+      return;
+    }
+
+    const activeCard = resultCardRefs.current.get(activeResult.videoId);
+    if (!activeCard) {
+      return;
+    }
+
+    const animationFrameId = window.requestAnimationFrame(() => {
+      activeCard.scrollIntoView({
+        behavior: autoplayEnabled ? "smooth" : "auto",
+        block: "nearest",
+        inline: "nearest",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [activeResult, autoplayEnabled]);
 
   useEffect(() => {
     if (!autoplayEnabled || !activeResult || !activeSnippet || deferredResults.length === 0 || !playbackWindow) {
@@ -230,6 +254,15 @@ export function SearchExperience() {
     selectVideo(result);
   }
 
+  function setResultCardRef(videoId: string, node: HTMLElement | null): void {
+    if (node) {
+      resultCardRefs.current.set(videoId, node);
+      return;
+    }
+
+    resultCardRefs.current.delete(videoId);
+  }
+
   return (
     <main className="page-shell">
       <section className="workspace-shell">
@@ -337,6 +370,7 @@ export function SearchExperience() {
                 return (
                   <article
                     key={result.videoId}
+                    ref={(node) => setResultCardRef(result.videoId, node)}
                     className={`result-rail-card${isActive ? " result-rail-card--active" : ""}`}
                     role="button"
                     tabIndex={0}
