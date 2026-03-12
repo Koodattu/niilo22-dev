@@ -5,7 +5,13 @@ import { query } from "../db.js";
 import { clipText, normalizeSearchText } from "./normalize.js";
 import { readSearchDataVersion } from "./search-data-version.js";
 
-interface SearchRow {
+interface TopVideoRow {
+  video_id: string;
+  match_count: number;
+  phrase_count: number;
+}
+
+interface ChunkRow {
   chunk_id: number;
   video_id: string;
   title: string;
@@ -15,11 +21,7 @@ interface SearchRow {
   end_ms: number;
   text: string;
   lexical_score: number;
-  chunk_similarity: number;
-  chunk_word_similarity: number;
-  title_similarity: number;
-  chunk_substring_boost: number;
-  title_substring_boost: number;
+  phrase_match: number;
 }
 
 interface VideoRow {
@@ -83,23 +85,12 @@ function toNumber(value: number | string | null | undefined): number {
   return 0;
 }
 
-function scoreRow(row: SearchRow): number {
-  const lexicalScore = toNumber(row.lexical_score);
-  const chunkWordSimilarity = toNumber(row.chunk_word_similarity);
-  const chunkSimilarity = toNumber(row.chunk_similarity);
-  const titleSimilarity = toNumber(row.title_similarity);
-  const chunkSubstringBoost = toNumber(row.chunk_substring_boost);
-  const titleSubstringBoost = toNumber(row.title_substring_boost);
-
-  return lexicalScore * 4 + chunkWordSimilarity * 2.5 + chunkSimilarity * 1.5 + titleSimilarity * 2.25 + chunkSubstringBoost + titleSubstringBoost;
-}
-
 function buildEmbedUrl(videoId: string, startMs: number): string {
   const startSeconds = Math.max(0, Math.floor(startMs / 1_000));
   return `https://www.youtube.com/embed/${videoId}?start=${startSeconds}&rel=0`;
 }
 
-function buildSnippet(videoId: string, row: Pick<SearchRow, "chunk_id" | "start_ms" | "end_ms" | "text">, score: number): SearchSnippet {
+function buildSnippet(videoId: string, row: Pick<ChunkRow, "chunk_id" | "start_ms" | "end_ms" | "text">, score: number): SearchSnippet {
   return {
     chunkId: row.chunk_id,
     startMs: row.start_ms,
@@ -168,6 +159,9 @@ async function synchronizeSearchCache(): Promise<string> {
   return nextVersion;
 }
 
+// Two-phase search: find top videos by FTS match count, then fetch their matching chunks.
+// Uses Finnish Snowball stemmer for morphology-aware full-text search.
+// For multi-word queries, uses phrase proximity matching to prefer exact phrase matches.
 async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: number): Promise<SearchResponse> {
   const startedAt = performance.now();
   const normalizedQuery = normalizeSearchText(rawQuery);
@@ -182,73 +176,119 @@ async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: 
     };
   }
 
-  const candidateLimit = Math.max(limit * snippetsPerVideo * 8, 60);
-  const sql = `
-    WITH prepared AS (
-      SELECT
-        $1::text AS raw_query,
-        $2::text AS normalized_query,
-        websearch_to_tsquery('simple', regexp_replace($2, '\\s+', ' ', 'g')) AS ts_query
-    )
-    SELECT
-      c.id AS chunk_id,
-      c.video_id,
-      v.title,
-      v.published_at,
-      v.transcript_word_count,
-      c.start_ms,
-      c.end_ms,
-      c.text,
-      ts_rank_cd(c.search_vector, prepared.ts_query)::double precision AS lexical_score,
-      similarity(c.normalized_text, prepared.normalized_query)::double precision AS chunk_similarity,
-      word_similarity(prepared.normalized_query, c.normalized_text)::double precision AS chunk_word_similarity,
-      similarity(v.normalized_title, prepared.normalized_query)::double precision AS title_similarity,
-      CASE WHEN c.normalized_text LIKE '%' || prepared.normalized_query || '%' THEN 0.45::double precision ELSE 0::double precision END AS chunk_substring_boost,
-      CASE WHEN v.normalized_title LIKE '%' || prepared.normalized_query || '%' THEN 0.75::double precision ELSE 0::double precision END AS title_substring_boost
-    FROM prepared
-    JOIN transcript_chunks c ON true
-    JOIN videos v ON v.youtube_id = c.video_id
-    WHERE
-      c.search_vector @@ prepared.ts_query
-      OR c.normalized_text % prepared.normalized_query
-      OR v.normalized_title % prepared.normalized_query
-      OR c.normalized_text LIKE '%' || prepared.normalized_query || '%'
-      OR v.normalized_title LIKE '%' || prepared.normalized_query || '%'
-    ORDER BY
-      (
-        ts_rank_cd(c.search_vector, prepared.ts_query) * 4 +
-        word_similarity(prepared.normalized_query, c.normalized_text) * 2.5 +
-        similarity(c.normalized_text, prepared.normalized_query) * 1.5 +
-        similarity(v.normalized_title, prepared.normalized_query) * 2.25 +
-        CASE WHEN c.normalized_text LIKE '%' || prepared.normalized_query || '%' THEN 0.45 ELSE 0 END +
-        CASE WHEN v.normalized_title LIKE '%' || prepared.normalized_query || '%' THEN 0.75 ELSE 0 END
-      ) DESC,
-      c.start_ms ASC
-    LIMIT $3
-  `;
+  const wordCount = normalizedQuery.split(" ").length;
+  const usePhrase = wordCount >= 2;
 
-  const { rows } = await query<SearchRow>(sql, [rawQuery, normalizedQuery, candidateLimit]);
+  // Phase 1: Find top videos.
+  // For multi-word queries, rank by phrase match count first (proximity-aware),
+  // then by total word-level match count.
+  const topVideosSql = usePhrase
+    ? `
+      SELECT
+        video_id,
+        COUNT(*) AS match_count,
+        COUNT(*) FILTER (WHERE search_vector @@ phraseto_tsquery('finnish', $1)) AS phrase_count
+      FROM transcript_chunks
+      WHERE search_vector @@ websearch_to_tsquery('finnish', $1)
+      GROUP BY video_id
+      ORDER BY phrase_count DESC, match_count DESC
+      LIMIT $2
+    `
+    : `
+      SELECT video_id, COUNT(*) AS match_count, 0 AS phrase_count
+      FROM transcript_chunks
+      WHERE search_vector @@ websearch_to_tsquery('finnish', $1)
+      GROUP BY video_id
+      ORDER BY match_count DESC
+      LIMIT $2
+    `;
+
+  const { rows: topVideos } = await query<TopVideoRow>(topVideosSql, [normalizedQuery, limit]);
+
+  if (topVideos.length === 0) {
+    return {
+      query: rawQuery,
+      normalizedQuery,
+      tookMs: roundDuration(startedAt),
+      resultCount: 0,
+      results: [],
+    };
+  }
+
+  // Phase 2: Get matching chunks for the top videos only.
+  // For multi-word queries, chunks matching the phrase query rank above word-only matches.
+  const videoIds = topVideos.map((row) => row.video_id);
+  const chunksSql = usePhrase
+    ? `
+      SELECT
+        c.id AS chunk_id,
+        c.video_id,
+        v.title,
+        v.published_at,
+        v.transcript_word_count,
+        c.start_ms,
+        c.end_ms,
+        c.text,
+        ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
+        CASE WHEN c.search_vector @@ phraseto_tsquery('finnish', $1) THEN 1.0 ELSE 0.0 END AS phrase_match
+      FROM transcript_chunks c
+      JOIN videos v ON v.youtube_id = c.video_id
+      WHERE c.video_id = ANY($2)
+        AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
+      ORDER BY phrase_match DESC, lexical_score DESC, c.start_ms ASC
+    `
+    : `
+      SELECT
+        c.id AS chunk_id,
+        c.video_id,
+        v.title,
+        v.published_at,
+        v.transcript_word_count,
+        c.start_ms,
+        c.end_ms,
+        c.text,
+        ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
+        0.0 AS phrase_match
+      FROM transcript_chunks c
+      JOIN videos v ON v.youtube_id = c.video_id
+      WHERE c.video_id = ANY($2)
+        AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
+      ORDER BY lexical_score DESC, c.start_ms ASC
+    `;
+
+  const { rows: chunkRows } = await query<ChunkRow>(chunksSql, [normalizedQuery, videoIds]);
+
+  // Build a lookup for video ranking signals
+  const matchCountByVideo = new Map<string, number>();
+  const phraseCountByVideo = new Map<string, number>();
+  for (const row of topVideos) {
+    matchCountByVideo.set(row.video_id, Number(row.match_count));
+    phraseCountByVideo.set(row.video_id, Number(row.phrase_count));
+  }
+
+  // Group chunks by video and select top snippets per video
   const grouped = new Map<string, SearchVideoResult>();
 
-  for (const row of rows) {
-    const snippetScore = scoreRow(row);
+  for (const row of chunkRows) {
+    const phraseMatch = toNumber(row.phrase_match);
+    const snippetScore = toNumber(row.lexical_score) + phraseMatch;
     const snippet = buildSnippet(row.video_id, row, snippetScore);
 
     const existing = grouped.get(row.video_id);
     if (!existing) {
+      const videoMatchCount = matchCountByVideo.get(row.video_id) ?? 0;
+      const videoPhraseCount = phraseCountByVideo.get(row.video_id) ?? 0;
       grouped.set(row.video_id, {
         videoId: row.video_id,
         title: row.title,
         publishedAt: row.published_at,
         transcriptWordCount: row.transcript_word_count,
-        score: snippetScore,
+        score: videoPhraseCount * 1000 + videoMatchCount,
         snippets: [snippet],
         primaryEmbedUrl: snippet.embedUrl,
       });
       continue;
     }
-
-    existing.score = Math.max(existing.score, snippetScore);
 
     const isNearExistingSnippet = existing.snippets.some((currentSnippet) => Math.abs(currentSnippet.startMs - snippet.startMs) < 5_000);
 
