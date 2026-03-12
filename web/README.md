@@ -6,7 +6,7 @@ This directory contains the web application stack for searching Niilo22 videos b
 
 - `frontend/`: Next.js search UI
 - `backend/`: Fastify API + PostgreSQL search queries + import script
-- `db/`: PostgreSQL migration SQL
+- `db/`: ordered PostgreSQL migration SQL
 - `docker-compose.dev.yml`: local development database only
 - `docker-compose.yml`: production-style full stack
 
@@ -92,7 +92,7 @@ For nginx deployments on the same VM, the published Docker ports default to `127
 
 If you intentionally want direct remote access to one of those services, change the matching bind IP to `0.0.0.0`.
 
-On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also creates the schema on startup, so the API can start cleanly even before the import job finishes.
+On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also applies the ordered SQL files in `db/migrations` on startup, so the API can start cleanly even before the import job finishes.
 
 To follow the initial import:
 

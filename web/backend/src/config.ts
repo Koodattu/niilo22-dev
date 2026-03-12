@@ -22,7 +22,7 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
   videosJsonPath: process.env.VIDEOS_JSON_PATH ?? resolve(repoRoot, "videos.json"),
   outputDir: process.env.OUTPUT_DIR ?? resolve(repoRoot, "output"),
-  migrationPath: process.env.MIGRATION_PATH ?? resolve(webRoot, "db", "migrations", "001_init.sql"),
+  migrationPath: process.env.MIGRATION_PATH ?? resolve(webRoot, "db", "migrations"),
   searchResultLimit: numberFromEnv(process.env.SEARCH_RESULT_LIMIT, 20),
   snippetLimitPerVideo: numberFromEnv(process.env.SNIPPET_LIMIT_PER_VIDEO, 4),
   searchCacheMaxEntries: numberFromEnv(process.env.SEARCH_CACHE_MAX_ENTRIES, 250),

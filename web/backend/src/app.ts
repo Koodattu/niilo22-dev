@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import fastify, { type FastifyInstance } from "fastify";
 
 import { getCorsOrigins } from "./config.js";
+import { registerAnalyticsRoute } from "./routes/analytics.js";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerSearchRoute } from "./routes/search.js";
 
@@ -18,6 +19,7 @@ export async function createApp(): Promise<FastifyInstance> {
 
   await registerHealthRoute(app);
   await registerSearchRoute(app);
+  await registerAnalyticsRoute(app);
 
   return app;
 }

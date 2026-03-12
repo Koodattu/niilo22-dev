@@ -126,6 +126,7 @@ export function SearchExperience() {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSnippetId, setActiveSnippetId] = useState<number | null>(null);
   const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
+  const [manualAutoplaySelection, setManualAutoplaySelection] = useState<{ videoId: string; snippetId: number | null } | null>(null);
   const [shareFeedback, setShareFeedback] = useState<ShareFeedbackState>("idle");
   const resultCardRefs = useRef(new Map<string, HTMLElement>());
   const shareFeedbackTimeoutRef = useRef<number | null>(null);
@@ -133,6 +134,9 @@ export function SearchExperience() {
   const deferredResults = useDeferredValue(results);
   const activeResult = results.find((result) => result.videoId === activeVideoId) ?? results[0] ?? null;
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
+  const shouldAutoplayActiveSelection =
+    autoplayEnabled ||
+    (manualAutoplaySelection !== null && manualAutoplaySelection.videoId === activeResult?.videoId && manualAutoplaySelection.snippetId === (activeSnippet?.chunkId ?? null));
   const playbackWindow = useMemo(() => (activeSnippet ? getPlaybackWindow(activeSnippet) : null), [activeSnippet]);
   const sharedClipHref = activeResult ? buildSharedClipHref(pathname, activeResult.videoId, activeSnippet?.chunkId ?? null) : null;
 
@@ -262,13 +266,13 @@ export function SearchExperience() {
     const timeoutId = window.setTimeout(() => {
       const nextSnippet = activeResult.snippets[currentSnippetIndex + 1];
       if (nextSnippet) {
-        selectVideo(activeResult, nextSnippet);
+        selectVideo(activeResult, nextSnippet, { playImmediately: false });
         return;
       }
 
       const nextResult = deferredResults[currentVideoIndex + 1];
       if (nextResult) {
-        selectVideo(nextResult);
+        selectVideo(nextResult, undefined, { playImmediately: false });
         return;
       }
 
@@ -295,6 +299,7 @@ export function SearchExperience() {
       setActiveVideoId(null);
       setActiveSnippetId(null);
       setAutoplayEnabled(false);
+      setManualAutoplaySelection(null);
 
       if (updateUrl) {
         replaceSearchParams("", false, null, null);
@@ -310,6 +315,7 @@ export function SearchExperience() {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
+    setManualAutoplaySelection(null);
 
     try {
       const response = await fetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`, {
@@ -351,6 +357,7 @@ export function SearchExperience() {
       setActiveVideoId(null);
       setActiveSnippetId(null);
       setAutoplayEnabled(false);
+      setManualAutoplaySelection(null);
       replaceSearchParams(trimmedQuery, false, null, null);
     } finally {
       setIsLoading(false);
@@ -373,6 +380,7 @@ export function SearchExperience() {
     setError(null);
     setHasSearched(true);
     setQuery(options?.queryToKeep ?? "");
+    setManualAutoplaySelection(null);
 
     try {
       const endpoint = new URL(`/api/videos/${encodeURIComponent(videoId)}`, window.location.origin);
@@ -420,6 +428,7 @@ export function SearchExperience() {
       setActiveVideoId(null);
       setActiveSnippetId(null);
       setAutoplayEnabled(false);
+      setManualAutoplaySelection(null);
     } finally {
       setIsLoading(false);
     }
@@ -430,8 +439,11 @@ export function SearchExperience() {
     await runSearch(query, true);
   }
 
-  function selectVideo(result: SearchVideoResult, snippet?: SearchSnippet): void {
+  function selectVideo(result: SearchVideoResult, snippet?: SearchSnippet, options?: { playImmediately?: boolean }): void {
     const nextSnippetId = snippet?.chunkId ?? result.snippets[0]?.chunkId ?? null;
+    const shouldPlayImmediately = options?.playImmediately ?? true;
+
+    setManualAutoplaySelection(shouldPlayImmediately ? { videoId: result.videoId, snippetId: nextSnippetId } : null);
 
     setActiveVideoId(result.videoId);
     setActiveSnippetId(nextSnippetId);
@@ -523,7 +535,7 @@ export function SearchExperience() {
               <iframe
                 key={`${activeResult.videoId}-${activeSnippet.chunkId}`}
                 className="stage-video"
-                src={withPlaybackWindow(activeResult.videoId, activeSnippet, autoplayEnabled)}
+                src={withPlaybackWindow(activeResult.videoId, activeSnippet, shouldAutoplayActiveSelection)}
                 title={activeResult.title}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
@@ -587,7 +599,7 @@ export function SearchExperience() {
 
             {hasSearched ? (
               <div className="sidebar-panel__stats">
-                <span>{`${resultCount} osumaa`}</span>
+                <span>{`${resultCount} videoust`}</span>
                 <span>{`${tookMs} ms`}</span>
               </div>
             ) : null}

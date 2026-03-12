@@ -33,7 +33,7 @@ services:
       CORS_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3222}
       VIDEOS_JSON_PATH: /app/data/videos.json
       OUTPUT_DIR: /app/data/output
-      MIGRATION_PATH: /app/db/migrations/001_init.sql
+      MIGRATION_PATH: /app/db/migrations
     depends_on:
       db:
         condition: service_healthy
@@ -52,7 +52,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-niilo22}:${POSTGRES_PASSWORD:-niilo22}@db:5432/${POSTGRES_DB:-niilo22}
       VIDEOS_JSON_PATH: /app/data/videos.json
       OUTPUT_DIR: /app/data/output
-      MIGRATION_PATH: /app/db/migrations/001_init.sql
+      MIGRATION_PATH: /app/db/migrations
     depends_on:
       db:
         condition: service_healthy

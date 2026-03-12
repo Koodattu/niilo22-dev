@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { config } from "../config.js";
+import { recordSearchQuery } from "../lib/analytics.js";
 import { loadSharedVideo, searchVideos } from "../lib/search.js";
 
 const searchQuerySchema = z.object({
@@ -30,6 +31,12 @@ export async function registerSearchRoute(app: FastifyInstance): Promise<void> {
     }
 
     const response = await searchVideos(parsedQuery.data.q, parsedQuery.data.limit ?? config.searchResultLimit, config.snippetLimitPerVideo);
+
+    try {
+      await recordSearchQuery(parsedQuery.data.q);
+    } catch (error) {
+      app.log.warn({ error }, "Failed to record search query analytics");
+    }
 
     return response;
   });
