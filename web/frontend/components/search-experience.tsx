@@ -118,6 +118,10 @@ export function SearchExperience() {
   }, [activeResult, activeSnippet, autoplayEnabled, deferredResults, playbackWindow]);
 
   async function runSearch(nextQuery: string, updateUrl: boolean): Promise<void> {
+    if (isLoading) {
+      return;
+    }
+
     const trimmedQuery = nextQuery.trim();
     if (!trimmedQuery) {
       setResults([]);
@@ -183,6 +187,15 @@ export function SearchExperience() {
     setActiveSnippetId(snippet?.chunkId ?? result.snippets[0]?.chunkId ?? null);
   }
 
+  function handleResultCardKeyDown(event: React.KeyboardEvent<HTMLElement>, result: SearchVideoResult): void {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    selectVideo(result);
+  }
+
   return (
     <main className="page-shell">
       <section className="workspace-shell">
@@ -218,9 +231,7 @@ export function SearchExperience() {
               />
             ) : (
               <div className="stage-empty">
-                <p className="stage-empty__eyebrow">Hakutulokset</p>
-                <h2>Video tulee tähän.</h2>
-                <p>Kirjoita oikealle haku ja valitse osuma.</p>
+                <h2>Kirjoita oikealle haku.</h2>
               </div>
             )}
           </div>
@@ -246,15 +257,7 @@ export function SearchExperience() {
         </section>
 
         <aside className="sidebar-panel">
-          <div className="sidebar-panel__topbar">
-            <p className="sidebar-panel__eyebrow sidebar-panel__eyebrow--compact">Haku</p>
-            <div className="sidebar-panel__stats">
-              <span>{hasSearched ? `${resultCount} osumaa` : "Valmis"}</span>
-              <span>{hasSearched && tookMs > 0 ? `${tookMs} ms` : "Postgres"}</span>
-            </div>
-          </div>
-
-          <form className="search-form" onSubmit={handleSubmit}>
+          <form className="search-form" onSubmit={handleSubmit} aria-busy={isLoading}>
             <div className="search-form__row search-form__row--stacked">
               <input
                 id="search-query"
@@ -262,41 +265,54 @@ export function SearchExperience() {
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="aamukahvi, pyöräily, ideapark"
+                placeholder="aamukahvi, pyöräily, tuju"
                 autoComplete="off"
               />
-              <button className="search-form__button" type="submit" disabled={isLoading}>
-                {isLoading ? "Haetaan..." : "Hae"}
+              <button className="search-form__button" type="submit" disabled={isLoading} aria-label={isLoading ? "Haku käynnissä" : "Hae"}>
+                {isLoading ? <span className="search-form__spinner" aria-hidden="true" /> : "Hae"}
               </button>
             </div>
           </form>
 
-          <div className="playback-controls">
-            <button
-              className={`autoplay-toggle${autoplayEnabled ? " autoplay-toggle--active" : ""}`}
-              type="button"
-              onClick={() => setAutoplayEnabled((currentValue) => !currentValue)}
-              disabled={!activeResult || !activeSnippet || deferredResults.length === 0}
-            >
-              {autoplayEnabled ? "Autoplay päällä" : "Autoplay pois"}
-            </button>
+          <div className="sidebar-panel__utility-row">
+            <div className="playback-controls">
+              <button
+                className={`autoplay-toggle${autoplayEnabled ? " autoplay-toggle--active" : ""}`}
+                type="button"
+                onClick={() => setAutoplayEnabled((currentValue) => !currentValue)}
+                disabled={!activeResult || !activeSnippet || deferredResults.length === 0}
+              >
+                {autoplayEnabled ? "Autoplay päällä" : "Autoplay pois"}
+              </button>
+            </div>
+
+            {hasSearched ? (
+              <div className="sidebar-panel__stats">
+                <span>{`${resultCount} osumaa`}</span>
+                <span>{`${tookMs} ms`}</span>
+              </div>
+            ) : null}
           </div>
 
           {error ? <p className="status-banner status-banner--error">{error}</p> : null}
-          {isLoading ? <p className="status-banner">Haetaan osumia...</p> : null}
 
           <div className="results-rail-shell">
             <div className="results-rail">
               {deferredResults.map((result) => {
                 const isActive = result.videoId === activeResult?.videoId;
                 return (
-                  <button key={result.videoId} type="button" className={`result-rail-card${isActive ? " result-rail-card--active" : ""}`} onClick={() => selectVideo(result)}>
+                  <article
+                    key={result.videoId}
+                    className={`result-rail-card${isActive ? " result-rail-card--active" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isActive}
+                    onClick={() => selectVideo(result)}
+                    onKeyDown={(event) => handleResultCardKeyDown(event, result)}
+                  >
                     <div className="result-rail-card__header">
-                      <div className="result-rail-card__title-block">
-                        <p className="result-rail-card__eyebrow">{formatDate(result.publishedAt)}</p>
-                        <h3>{result.title}</h3>
-                      </div>
-                      <span className="result-rail-card__badge">{Math.round(result.score * 10) / 10}</span>
+                      <h3>{result.title}</h3>
+                      <p className="result-rail-card__date">{formatDate(result.publishedAt)}</p>
                     </div>
 
                     <div className="result-rail-card__snippet-list">
@@ -315,7 +331,7 @@ export function SearchExperience() {
                         </button>
                       ))}
                     </div>
-                  </button>
+                  </article>
                 );
               })}
 
