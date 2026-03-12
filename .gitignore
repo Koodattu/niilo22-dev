@@ -198,6 +198,11 @@ pyrightconfig.json
 /output
 /videos
 yt-dlp.exe
+web/frontend/node_modules/
+web/frontend/.next/
+web/backend/node_modules/
+web/backend/dist/
+*.tsbuildinfo
 videos.json
 transcription_progress.txt
 *.mp3

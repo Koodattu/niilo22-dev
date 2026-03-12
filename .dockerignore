@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vs
+venv
+__pycache__
+output
+videos
+*.mp3
+*.jsonl
+web/frontend/.next
+web/frontend/node_modules
+web/backend/node_modules
+web/backend/dist

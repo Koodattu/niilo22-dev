@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-niilo22}
+      POSTGRES_USER: ${POSTGRES_USER:-niilo22}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-niilo22}
+    volumes:
+      - niilo22_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-niilo22} -d ${POSTGRES_DB:-niilo22}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ..
+      dockerfile: web/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-niilo22}:${POSTGRES_PASSWORD:-niilo22}@db:5432/${POSTGRES_DB:-niilo22}
+      CORS_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      VIDEOS_JSON_PATH: /app/data/videos.json
+      OUTPUT_DIR: /app/data/output
+      MIGRATION_PATH: /app/db/migrations/001_init.sql
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ../videos.json:/app/data/videos.json:ro
+      - ../output:/app/data/output:ro
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: web/frontend/Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://backend:4000}
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+volumes:
+  niilo22_postgres:

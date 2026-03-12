@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: niilo22-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-niilo22}
+      POSTGRES_USER: ${POSTGRES_USER:-niilo22}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-niilo22}
+    ports:
+      - "5432:5432"
+    volumes:
+      - niilo22_postgres_dev:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-niilo22} -d ${POSTGRES_DB:-niilo22}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  niilo22_postgres_dev:
