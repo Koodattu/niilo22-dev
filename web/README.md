@@ -19,6 +19,8 @@ cd web
 docker compose -f docker-compose.dev.yml up -d
 ```
 
+PostgreSQL is published on host port `55432` by default. Override it with `POSTGRES_HOST_PORT` in `web/.env` if needed.
+
 2. Install dependencies:
 
 ```powershell
@@ -62,6 +64,7 @@ The frontend proxies `/api/search` to the backend using `BACKEND_URL`, so the br
 From `web/`:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build -d
 ```
 
@@ -69,12 +72,51 @@ This starts:
 
 - PostgreSQL
 - Fastify backend
+- importer job for `videos.json` and `output/*.json`
 - Next.js frontend
 
-If you need to import data inside the backend container:
+The stack uses these host ports by default:
+
+- frontend: `3000`
+- backend: `4000`
+- PostgreSQL: `55432`
+
+On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also creates the schema on startup, so the API can start cleanly even before the import job finishes.
+
+To follow the initial import:
 
 ```powershell
-docker compose exec backend node dist/scripts/import-data.js
+docker compose logs -f importer
+```
+
+To re-run the import manually later:
+
+```powershell
+docker compose run --rm importer
+```
+
+To connect to PostgreSQL from the VM host or another tool:
+
+```text
+Host: <vm-ip-or-hostname>
+Port: 55432
+Database: niilo22
+User: niilo22
+Password: niilo22
+```
+
+Replace those defaults in `web/.env` before starting the stack on the VM.
+
+To stop the app without deleting data:
+
+```powershell
+docker compose down
+```
+
+To stop the app and wipe the PostgreSQL volume:
+
+```powershell
+docker compose down -v
 ```
 
 ## Search model

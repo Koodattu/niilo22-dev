@@ -6,6 +6,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-niilo22}
       POSTGRES_USER: ${POSTGRES_USER:-niilo22}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-niilo22}
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - niilo22_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -37,6 +39,24 @@ services:
         condition: service_healthy
     ports:
       - "4000:4000"
+    volumes:
+      - ../videos.json:/app/data/videos.json:ro
+      - ../output:/app/data/output:ro
+
+  importer:
+    build:
+      context: ..
+      dockerfile: web/backend/Dockerfile
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-niilo22}:${POSTGRES_PASSWORD:-niilo22}@db:5432/${POSTGRES_DB:-niilo22}
+      VIDEOS_JSON_PATH: /app/data/videos.json
+      OUTPUT_DIR: /app/data/output
+      MIGRATION_PATH: /app/db/migrations/001_init.sql
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["node", "dist/scripts/import-data.js"]
     volumes:
       - ../videos.json:/app/data/videos.json:ro
       - ../output:/app/data/output:ro

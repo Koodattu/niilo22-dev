@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 
 import { config } from "../src/config.js";
 import { pool, withTransaction } from "../src/db.js";
+import { ensureSchema } from "../src/lib/ensure-schema.js";
 import { createTranscriptChunks, type TranscriptWord } from "../src/lib/chunk-transcript.js";
 import { normalizeSearchText } from "../src/lib/normalize.js";
 import { writeSearchDataVersion } from "../src/lib/search-data-version.js";
@@ -35,11 +36,6 @@ function extractYoutubeId(filename: string): string | null {
   }
 
   return parts[2] ?? null;
-}
-
-async function ensureSchema(): Promise<void> {
-  const migrationSql = await readFile(config.migrationPath, "utf8");
-  await pool.query(migrationSql);
 }
 
 async function readVideosFile(): Promise<VideosFile> {

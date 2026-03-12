@@ -161,13 +161,19 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
     endpoint.searchParams.set("snippet", snippetId);
   }
 
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-    cache: "no-store",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
 
   if (!response.ok) {
     return null;
