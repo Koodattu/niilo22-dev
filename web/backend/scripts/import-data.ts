@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { sep } from "node:path";
 
 import type { PoolClient } from "pg";
 
@@ -28,14 +28,44 @@ interface TranscriptFile {
   words?: TranscriptWord[];
 }
 
-function extractYoutubeId(filename: string): string | null {
-  const baseName = filename.replace(/\.json$/i, "");
-  const parts = baseName.split("_").filter(Boolean);
+interface TranscriptLocation {
+  filePath: Buffer;
+  displayName: string;
+}
+
+function extractYoutubeId(filename: Buffer | string): string | null {
+  const filenameBuffer = typeof filename === "string" ? Buffer.from(filename) : filename;
+  const jsonSuffix = Buffer.from(".json");
+
+  if (filenameBuffer.length <= jsonSuffix.length || !filenameBuffer.subarray(filenameBuffer.length - jsonSuffix.length).equals(jsonSuffix)) {
+    return null;
+  }
+
+  const baseName = filenameBuffer.subarray(0, filenameBuffer.length - jsonSuffix.length);
+  const parts: Buffer[] = [];
+  let sliceStart = 0;
+
+  for (let index = 0; index < baseName.length; index += 1) {
+    if (baseName[index] !== 0x5f) {
+      continue;
+    }
+
+    if (index > sliceStart) {
+      parts.push(baseName.subarray(sliceStart, index));
+    }
+
+    sliceStart = index + 1;
+  }
+
+  if (sliceStart < baseName.length) {
+    parts.push(baseName.subarray(sliceStart));
+  }
+
   if (parts.length < 3) {
     return null;
   }
 
-  return parts[2] ?? null;
+  return parts[2]?.toString("utf8") ?? null;
 }
 
 async function readVideosFile(): Promise<VideosFile> {
@@ -43,25 +73,29 @@ async function readVideosFile(): Promise<VideosFile> {
   return JSON.parse(raw) as VideosFile;
 }
 
-async function buildTranscriptIndex(): Promise<Map<string, string>> {
-  const entries = await readdir(config.outputDir, { withFileTypes: true });
-  const transcriptIndex = new Map<string, string>();
+async function buildTranscriptIndex(): Promise<Map<string, TranscriptLocation>> {
+  const entries = await readdir(config.outputDir, { encoding: "buffer", withFileTypes: true });
+  const transcriptIndex = new Map<string, TranscriptLocation>();
+  const outputDirPrefix = Buffer.from(`${config.outputDir}${sep}`);
 
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+    if (!entry.isFile() || !Buffer.isBuffer(entry.name) || !entry.name.subarray(Math.max(0, entry.name.length - 5)).equals(Buffer.from(".json"))) {
       continue;
     }
 
     const youtubeId = extractYoutubeId(entry.name);
     if (youtubeId) {
-      transcriptIndex.set(youtubeId, `${config.outputDir}/${entry.name}`);
+      transcriptIndex.set(youtubeId, {
+        filePath: Buffer.concat([outputDirPrefix, entry.name]),
+        displayName: entry.name.toString("utf8"),
+      });
     }
   }
 
   return transcriptIndex;
 }
 
-async function readTranscript(path: string): Promise<TranscriptFile> {
+async function readTranscript(path: Buffer): Promise<TranscriptFile> {
   const raw = await readFile(path, "utf8");
   return JSON.parse(raw) as TranscriptFile;
 }
@@ -136,12 +170,12 @@ async function importAllVideos(): Promise<void> {
   let totalChunks = 0;
 
   for (const video of videosFile.videos) {
-    const transcriptPath = transcriptIndex.get(video.id);
-    const transcript = transcriptPath ? await readTranscript(transcriptPath) : null;
+    const transcriptLocation = transcriptIndex.get(video.id);
+    const transcript = transcriptLocation ? await readTranscript(transcriptLocation.filePath) : null;
     const words = transcript?.words ?? [];
     const chunks = createTranscriptChunks(words);
-    const transcriptStatus = transcriptPath ? (words.length > 0 ? "ready" : "ambient") : "missing";
-    const localFileName = transcript?.file_name ?? (transcriptPath ? basename(transcriptPath) : null);
+    const transcriptStatus = transcriptLocation ? (words.length > 0 ? "ready" : "ambient") : "missing";
+    const localFileName = transcript?.file_name ?? transcriptLocation?.displayName ?? null;
 
     await withTransaction(async (client) => {
       await upsertVideo(client, video, words.length, transcriptStatus, localFileName);
