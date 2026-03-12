@@ -163,6 +163,13 @@ input {
   justify-content: space-between;
 }
 
+.stage-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .stage-video-shell {
   min-height: 0;
   border-radius: 28px;
@@ -303,6 +310,7 @@ input {
 .result-rail-card:focus-visible,
 .result-rail-snippet:focus-visible,
 .autoplay-toggle:focus-visible,
+.stage-link:focus-visible,
 .search-form__button:focus-visible,
 .search-form__input:focus-visible {
   outline: 2px solid rgba(197, 90, 42, 0.42);
@@ -316,6 +324,7 @@ input {
   min-width: auto;
   min-height: 32px;
   padding: 0 12px;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--accent) 0%, #e78b50 100%);
   color: white;
@@ -324,6 +333,21 @@ input {
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.stage-link--share {
+  background: linear-gradient(135deg, #0d7c72 0%, #19a191 100%);
+  border-color: rgba(8, 77, 71, 0.16);
+  color: #f7fffe;
+}
+
+.stage-link--share.stage-link--share-copied {
+  background: linear-gradient(135deg, #147052 0%, #2f9f76 100%);
+}
+
+.stage-link--share.stage-link--share-error {
+  background: linear-gradient(135deg, #b1522c 0%, #d07142 100%);
 }
 
 .search-form__button:hover:not(:disabled),

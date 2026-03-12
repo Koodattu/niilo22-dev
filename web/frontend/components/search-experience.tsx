@@ -1,13 +1,16 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import type { SearchResponse, SearchSnippet, SearchVideoResult } from "./search-types";
 
 const MATCH_LEAD_SECONDS = 3;
 const MATCH_TAIL_SECONDS = 6;
 const MIN_PLAYBACK_WINDOW_SECONDS = 10;
+const SHARE_FEEDBACK_TIMEOUT_MS = 2_000;
+
+type ShareFeedbackState = "idle" | "copied" | "error";
 
 function formatTimestamp(startSeconds: number): string {
   const hours = Math.floor(startSeconds / 3600);
@@ -38,6 +41,47 @@ function parseSnippetId(value: string | null): number | null {
   return Number.isNaN(parsedValue) ? null : parsedValue;
 }
 
+function buildSharedClipHref(pathname: string, videoId: string, snippetId: number | null): string {
+  const params = new URLSearchParams();
+
+  params.set("autoplay", "1");
+  params.set("result", videoId);
+
+  if (snippetId !== null) {
+    params.set("snippet", String(snippetId));
+  }
+
+  return `${pathname}?${params.toString()}`;
+}
+
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable.");
+  }
+
+  const fallbackInput = document.createElement("textarea");
+  fallbackInput.value = value;
+  fallbackInput.setAttribute("readonly", "true");
+  fallbackInput.style.position = "absolute";
+  fallbackInput.style.left = "-9999px";
+
+  document.body.appendChild(fallbackInput);
+  fallbackInput.select();
+
+  const didCopy = document.execCommand("copy");
+
+  document.body.removeChild(fallbackInput);
+
+  if (!didCopy) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
 function withPlaybackWindow(videoId: string, snippet: SearchSnippet, autoplayEnabled: boolean): string {
   const playbackStartSeconds = Math.max(0, snippet.startSeconds - MATCH_LEAD_SECONDS);
   const playbackEndSeconds = Math.max(playbackStartSeconds + MIN_PLAYBACK_WINDOW_SECONDS, snippet.endSeconds + MATCH_TAIL_SECONDS);
@@ -63,13 +107,14 @@ function getPlaybackWindow(snippet: SearchSnippet): { startSeconds: number; endS
 }
 
 export function SearchExperience() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const initialQuery = searchParams.get("q") ?? "";
+  const currentQuery = searchParams.get("q") ?? "";
+  const initialQuery = currentQuery;
   const initialAutoplayEnabled = searchParams.get("autoplay") !== "0";
   const selectedResultId = searchParams.get("result");
   const selectedSnippetId = parseSnippetId(searchParams.get("snippet"));
+  const isSharedView = !currentQuery.trim() && Boolean(selectedResultId);
 
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchVideoResult[]>([]);
@@ -81,15 +126,22 @@ export function SearchExperience() {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSnippetId, setActiveSnippetId] = useState<number | null>(null);
   const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
+  const [shareFeedback, setShareFeedback] = useState<ShareFeedbackState>("idle");
   const resultCardRefs = useRef(new Map<string, HTMLElement>());
+  const shareFeedbackTimeoutRef = useRef<number | null>(null);
 
   const deferredResults = useDeferredValue(results);
-  const activeResult = deferredResults.find((result) => result.videoId === activeVideoId) ?? deferredResults[0] ?? null;
+  const activeResult = results.find((result) => result.videoId === activeVideoId) ?? results[0] ?? null;
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
   const playbackWindow = useMemo(() => (activeSnippet ? getPlaybackWindow(activeSnippet) : null), [activeSnippet]);
+  const sharedClipHref = activeResult ? buildSharedClipHref(pathname, activeResult.videoId, activeSnippet?.chunkId ?? null) : null;
 
   function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean, nextResultId?: string | null, nextSnippetId?: number | null): void {
-    const currentSearch = typeof window === "undefined" ? searchParams.toString() : window.location.search;
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const currentSearch = window.location.search;
     const params = new URLSearchParams(currentSearch.startsWith("?") ? currentSearch.slice(1) : currentSearch);
 
     if (nextQuery !== undefined) {
@@ -123,7 +175,13 @@ export function SearchExperience() {
     }
 
     const nextSearch = params.toString();
-    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname);
+
+    if (nextSearch === searchParams.toString()) {
+      return;
+    }
+
+    const nextUrl = nextSearch ? `${pathname}?${nextSearch}` : pathname;
+    window.history.replaceState(null, "", nextUrl);
   }
 
   function updateAutoplayEnabled(nextAutoplayEnabled: boolean): void {
@@ -132,17 +190,39 @@ export function SearchExperience() {
   }
 
   useEffect(() => {
-    if (!initialQuery.trim()) {
-      return;
+    async function bootstrapFromUrl(): Promise<void> {
+      if (selectedResultId) {
+        await loadSelectedVideo(selectedResultId, selectedSnippetId, {
+          queryToKeep: initialQuery,
+          syncUrl: !initialQuery.trim(),
+        });
+      }
+
+      if (initialQuery.trim()) {
+        await runSearch(initialQuery, false, selectedResultId, selectedSnippetId);
+      }
     }
 
-    void runSearch(initialQuery, false, selectedResultId, selectedSnippetId);
+    void bootstrapFromUrl();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     setAutoplayEnabled(initialAutoplayEnabled);
   }, [initialAutoplayEnabled]);
+
+  useEffect(() => {
+    setShareFeedback("idle");
+  }, [sharedClipHref]);
+
+  useEffect(() => {
+    return () => {
+      if (shareFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(shareFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeResult) {
@@ -277,6 +357,74 @@ export function SearchExperience() {
     }
   }
 
+  async function loadSelectedVideo(
+    videoId: string,
+    preferredSnippetId?: number | null,
+    options?: {
+      queryToKeep?: string;
+      syncUrl?: boolean;
+    },
+  ): Promise<void> {
+    if (isLoading) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setHasSearched(true);
+    setQuery(options?.queryToKeep ?? "");
+
+    try {
+      const endpoint = new URL(`/api/videos/${encodeURIComponent(videoId)}`, window.location.origin);
+
+      if (preferredSnippetId !== null && preferredSnippetId !== undefined) {
+        endpoint.searchParams.set("snippet", String(preferredSnippetId));
+      }
+
+      const response = await fetch(endpoint.toString(), {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Shared video request failed with status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as SearchResponse;
+      const nextActiveResult = payload.results[0] ?? null;
+      const nextActiveSnippet = nextActiveResult
+        ? preferredSnippetId !== null && preferredSnippetId !== undefined
+          ? (nextActiveResult.snippets.find((snippet) => snippet.chunkId === preferredSnippetId) ?? nextActiveResult.snippets[0] ?? null)
+          : (nextActiveResult.snippets[0] ?? null)
+        : null;
+
+      startTransition(() => {
+        setResults(payload.results);
+        setResultCount(payload.resultCount);
+        setTookMs(payload.tookMs);
+        setActiveVideoId(nextActiveResult?.videoId ?? null);
+        setActiveSnippetId(nextActiveSnippet?.chunkId ?? null);
+      });
+
+      if (options?.syncUrl ?? true) {
+        replaceSearchParams(options?.queryToKeep ?? "", true, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Shared video request failed unexpectedly.");
+      setResults([]);
+      setResultCount(0);
+      setTookMs(0);
+      setActiveVideoId(null);
+      setActiveSnippetId(null);
+      setAutoplayEnabled(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     await runSearch(query, true);
@@ -308,6 +456,33 @@ export function SearchExperience() {
     resultCardRefs.current.delete(videoId);
   }
 
+  function queueShareFeedbackReset(): void {
+    if (shareFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(shareFeedbackTimeoutRef.current);
+    }
+
+    shareFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setShareFeedback("idle");
+      shareFeedbackTimeoutRef.current = null;
+    }, SHARE_FEEDBACK_TIMEOUT_MS);
+  }
+
+  async function handleShareCopy(): Promise<void> {
+    if (!sharedClipHref || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const shareUrl = new URL(sharedClipHref, window.location.origin).toString();
+      await copyTextToClipboard(shareUrl);
+      setShareFeedback("copied");
+    } catch {
+      setShareFeedback("error");
+    }
+
+    queueShareFeedbackReset();
+  }
+
   return (
     <main className="page-shell">
       <section className="workspace-shell">
@@ -317,17 +492,29 @@ export function SearchExperience() {
               <div className="stage-bar__meta">
                 <p className="stage-bar__eyebrow stage-bar__eyebrow--inline">{activeResult ? formatDate(activeResult.publishedAt) : "Hakutulokset"}</p>
                 {activeResult && activeSnippet ? (
-                  <a
-                    className="stage-link"
-                    href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? activeSnippet.startSeconds}s`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Avaa YouTubessa
-                  </a>
+                  <div className="stage-bar__actions">
+                    <a
+                      className="stage-link"
+                      href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? activeSnippet.startSeconds}s`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Avaa YouTubessa
+                    </a>
+                    {sharedClipHref ? (
+                      <button
+                        className={`stage-link stage-link--share${shareFeedback !== "idle" ? ` stage-link--share-${shareFeedback}` : ""}`}
+                        type="button"
+                        onClick={() => void handleShareCopy()}
+                        aria-live="polite"
+                      >
+                        {shareFeedback === "copied" ? "Linkki kopioitu" : shareFeedback === "error" ? "Kopiointi ei onnistunut" : "Jaa tämä luikautus"}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-              <h1>{activeResult?.title ?? "Valitse haku oikealta"}</h1>
+              <h1>{activeResult?.title ?? (isSharedView ? "Jaettua luikautusta ei löytynyt" : "Valitse haku oikealta")}</h1>
             </div>
           </div>
 
@@ -343,7 +530,7 @@ export function SearchExperience() {
               />
             ) : (
               <div className="stage-empty">
-                <h2>Kirjoita oikealle haku.</h2>
+                <h2>{isSharedView ? "Jaettua luikautusta ei voitu avata." : "Kirjoita oikealle haku."}</h2>
               </div>
             )}
           </div>
