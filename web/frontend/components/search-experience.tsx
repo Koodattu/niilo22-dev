@@ -58,6 +58,7 @@ export function SearchExperience() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") ?? "";
+  const initialAutoplayEnabled = searchParams.get("autoplay") !== "0";
 
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchVideoResult[]>([]);
@@ -68,12 +69,38 @@ export function SearchExperience() {
   const [error, setError] = useState<string | null>(null);
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSnippetId, setActiveSnippetId] = useState<number | null>(null);
-  const [autoplayEnabled, setAutoplayEnabled] = useState(true);
+  const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
 
   const deferredResults = useDeferredValue(results);
   const activeResult = deferredResults.find((result) => result.videoId === activeVideoId) ?? deferredResults[0] ?? null;
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
   const playbackWindow = useMemo(() => (activeSnippet ? getPlaybackWindow(activeSnippet) : null), [activeSnippet]);
+
+  function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean): void {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (nextQuery !== undefined) {
+      const trimmedQuery = nextQuery.trim();
+
+      if (trimmedQuery) {
+        params.set("q", trimmedQuery);
+      } else {
+        params.delete("q");
+      }
+    }
+
+    if (nextAutoplayEnabled !== undefined) {
+      params.set("autoplay", nextAutoplayEnabled ? "1" : "0");
+    }
+
+    const nextSearch = params.toString();
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname);
+  }
+
+  function updateAutoplayEnabled(nextAutoplayEnabled: boolean): void {
+    setAutoplayEnabled(nextAutoplayEnabled);
+    replaceSearchParams(undefined, nextAutoplayEnabled);
+  }
 
   useEffect(() => {
     if (!initialQuery.trim()) {
@@ -83,6 +110,10 @@ export function SearchExperience() {
     void runSearch(initialQuery, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setAutoplayEnabled(initialAutoplayEnabled);
+  }, [initialAutoplayEnabled]);
 
   useEffect(() => {
     if (!autoplayEnabled || !activeResult || !activeSnippet || deferredResults.length === 0 || !playbackWindow) {
@@ -109,7 +140,7 @@ export function SearchExperience() {
         return;
       }
 
-      setAutoplayEnabled(false);
+      updateAutoplayEnabled(false);
     }, playbackWindow.durationMs);
 
     return () => {
@@ -129,14 +160,17 @@ export function SearchExperience() {
       setTookMs(0);
       setHasSearched(false);
       setError(null);
-      setAutoplayEnabled(false);
+      updateAutoplayEnabled(false);
+
+      if (updateUrl) {
+        replaceSearchParams("", false);
+      }
+
       return;
     }
 
     if (updateUrl) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("q", trimmedQuery);
-      router.replace(`${pathname}?${params.toString()}`);
+      replaceSearchParams(trimmedQuery, autoplayEnabled);
     }
 
     setIsLoading(true);
@@ -171,7 +205,7 @@ export function SearchExperience() {
       setTookMs(0);
       setActiveVideoId(null);
       setActiveSnippetId(null);
-      setAutoplayEnabled(false);
+      updateAutoplayEnabled(false);
     } finally {
       setIsLoading(false);
     }
@@ -202,20 +236,20 @@ export function SearchExperience() {
         <section className="stage-panel">
           <div className="stage-bar stage-bar--top">
             <div className="stage-bar__header">
-              <p className="stage-bar__eyebrow">{activeResult ? formatDate(activeResult.publishedAt) : "Hakutulokset"}</p>
+              <div className="stage-bar__meta">
+                <p className="stage-bar__eyebrow stage-bar__eyebrow--inline">{activeResult ? formatDate(activeResult.publishedAt) : "Hakutulokset"}</p>
+                {activeResult && activeSnippet ? (
+                  <a
+                    className="stage-link"
+                    href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? activeSnippet.startSeconds}s`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Avaa YouTubessa
+                  </a>
+                ) : null}
+              </div>
               <h1>{activeResult?.title ?? "Valitse haku oikealta"}</h1>
-            </div>
-            <div className="stage-bar__meta">
-              {activeResult && activeSnippet ? (
-                <a
-                  className="stage-link"
-                  href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? activeSnippet.startSeconds}s`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Avaa YouTubessa
-                </a>
-              ) : null}
             </div>
           </div>
 
@@ -279,7 +313,7 @@ export function SearchExperience() {
               <button
                 className={`autoplay-toggle${autoplayEnabled ? " autoplay-toggle--active" : ""}`}
                 type="button"
-                onClick={() => setAutoplayEnabled((currentValue) => !currentValue)}
+                onClick={() => updateAutoplayEnabled(!autoplayEnabled)}
                 disabled={!activeResult || !activeSnippet || deferredResults.length === 0}
               >
                 {autoplayEnabled ? "Autoplay päällä" : "Autoplay pois"}
