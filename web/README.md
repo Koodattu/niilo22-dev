@@ -81,6 +81,8 @@ The stack uses these host ports by default:
 - backend: `4000`
 - PostgreSQL: `55432`
 
+If the VM already has something bound to `3000` or `4000`, change `FRONTEND_HOST_PORT` or `BACKEND_HOST_PORT` in `web/.env` before starting the stack.
+
 On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also creates the schema on startup, so the API can start cleanly even before the import job finishes.
 
 To follow the initial import:

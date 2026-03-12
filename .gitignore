@@ -203,10 +203,10 @@ web/frontend/.next/
 web/backend/node_modules/
 web/backend/dist/
 *.tsbuildinfo
-videos.json
 transcription_progress.txt
 *.mp3
 cookies.txt
 combined_words.txt
-/_unsloth_temporary_saved_buffers
 deno.exe
+videos.json
+output.zip

@@ -38,7 +38,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "4000:4000"
+      - "${BACKEND_HOST_PORT:-4000}:4000"
     volumes:
       - ../videos.json:/app/data/videos.json:ro
       - ../output:/app/data/output:ro
@@ -72,7 +72,7 @@ services:
       backend:
         condition: service_started
     ports:
-      - "3000:3000"
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
 
 volumes:
   niilo22_postgres:
