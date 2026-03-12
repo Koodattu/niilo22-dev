@@ -25,6 +25,8 @@ export const config = {
   migrationPath: process.env.MIGRATION_PATH ?? resolve(webRoot, "db", "migrations", "001_init.sql"),
   searchResultLimit: numberFromEnv(process.env.SEARCH_RESULT_LIMIT, 12),
   snippetLimitPerVideo: numberFromEnv(process.env.SNIPPET_LIMIT_PER_VIDEO, 3),
+  searchCacheMaxEntries: numberFromEnv(process.env.SEARCH_CACHE_MAX_ENTRIES, 250),
+  searchDataVersionPath: process.env.SEARCH_DATA_VERSION_PATH ?? resolve(backendRoot, ".cache", "search-data-version.txt"),
 };
 
 export function getCorsOrigins(): true | string[] {

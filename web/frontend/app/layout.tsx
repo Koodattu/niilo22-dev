@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { Fraunces, Space_Grotesk } from "next/font/google";
+import { Bitter, Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
 
 import "./globals.css";
 
-const headingFont = Fraunces({
+const headingFont = Bitter({
   subsets: ["latin"],
   variable: "--font-heading",
 });

@@ -7,6 +7,7 @@ import { config } from "../src/config.js";
 import { pool, withTransaction } from "../src/db.js";
 import { createTranscriptChunks, type TranscriptWord } from "../src/lib/chunk-transcript.js";
 import { normalizeSearchText } from "../src/lib/normalize.js";
+import { writeSearchDataVersion } from "../src/lib/search-data-version.js";
 
 interface VideoItem {
   id: string;
@@ -159,6 +160,7 @@ async function importAllVideos(): Promise<void> {
     }
   }
 
+  await writeSearchDataVersion();
   console.log(`Import complete: ${processed} videos, ${totalChunks} transcript chunks`);
 }
 

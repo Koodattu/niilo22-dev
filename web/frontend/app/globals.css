@@ -204,6 +204,7 @@ input {
   padding-bottom: 0;
 }
 
+
 .stage-snippets {
   display: flex;
   gap: 10px;
@@ -217,10 +218,23 @@ input {
   text-align: left;
   cursor: pointer;
   transition:
-    transform 160ms ease,
     border-color 160ms ease,
+    box-shadow 160ms ease,
     background-color 160ms ease,
-    color 160ms ease;
+    color 160ms ease,
+    filter 160ms ease;
+}
+
+.result-rail-card,
+.search-form__button,
+.stage-link,
+.autoplay-toggle {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    filter 160ms ease;
 }
 
 .stage-snippet {
@@ -232,12 +246,13 @@ input {
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 249, 242, 0.78);
-  box-shadow: none;
+  box-shadow: 0 0 0 1px transparent;
 }
 
 .stage-snippet--active {
   border-color: rgba(197, 90, 42, 0.5);
-  background: linear-gradient(180deg, rgba(255, 235, 224, 0.96), rgba(255, 246, 238, 0.96));
+  background: linear-gradient(180deg, rgba(255, 235, 224, 0.98), rgba(255, 246, 238, 0.98));
+  box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.12);
 }
 
 .stage-snippet__time,
@@ -251,17 +266,37 @@ input {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text);
-  line-height: 1.4;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
 
 .stage-snippet:hover,
-.result-rail-card:hover,
 .result-rail-snippet:hover,
-.search-form__button:hover:not(:disabled),
-.stage-link:hover {
-  transform: translateY(-1px);
+.result-rail-card:hover {
+  border-color: rgba(197, 90, 42, 0.34);
+  box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.12);
+  background: rgba(255, 239, 228, 0.98);
+}
+
+.stage-snippet--active:hover {
+  border-color: rgba(197, 90, 42, 0.54);
+  box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.14);
+  background: linear-gradient(180deg, rgba(255, 229, 214, 0.99), rgba(255, 242, 232, 0.99));
+}
+
+@supports selector(.result-rail-card:has(.result-rail-snippet:hover)) {
+  .result-rail-card:hover:has(.result-rail-snippet:hover) {
+    border-color: rgba(95, 67, 38, 0.12);
+    box-shadow: 0 0 0 1px transparent;
+    background: rgba(251, 246, 240, 0.94);
+  }
+
+  .result-rail-card--active:hover:has(.result-rail-snippet:hover) {
+    border-color: rgba(197, 90, 42, 0.46);
+    box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.12), 0 10px 24px rgba(124, 55, 18, 0.08);
+    background: rgba(255, 242, 231, 0.98);
+  }
 }
 
 .result-rail-card:focus-visible,
@@ -288,6 +323,12 @@ input {
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.search-form__button:hover:not(:disabled),
+.stage-link:hover {
+  filter: brightness(1.04);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset, 0 10px 24px rgba(124, 55, 18, 0.12);
 }
 
 .search-form__row {
@@ -365,22 +406,25 @@ input {
   color: var(--text);
   font-weight: 700;
   cursor: pointer;
-  transition:
-    transform 160ms ease,
-    border-color 160ms ease,
-    background-color 160ms ease,
-    color 160ms ease;
+  box-shadow: 0 0 0 1px transparent;
 }
 
 .autoplay-toggle:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: rgba(255, 241, 231, 0.95);
+  border-color: rgba(197, 90, 42, 0.28);
+  background: rgba(255, 233, 217, 0.99);
+  box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.08);
 }
 
 .autoplay-toggle--active {
   border-color: rgba(197, 90, 42, 0.4);
   background: linear-gradient(135deg, rgba(197, 90, 42, 0.14), rgba(231, 139, 80, 0.16));
   color: var(--accent-strong);
+}
+
+.autoplay-toggle--active:hover:not(:disabled) {
+  border-color: rgba(197, 90, 42, 0.48);
+  background: linear-gradient(135deg, rgba(197, 90, 42, 0.22), rgba(231, 139, 80, 0.24));
+  box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.1);
 }
 
 .autoplay-toggle:disabled {
@@ -434,13 +478,24 @@ input {
   text-align: left;
   overflow: hidden;
   border: 1px solid rgba(95, 67, 38, 0.12);
-  background: rgba(255, 250, 244, 0.84);
-  box-shadow: none;
+  background: rgba(251, 246, 240, 0.94);
+  box-shadow: 0 0 0 1px transparent;
 }
 
 .result-rail-card--active {
   border-color: rgba(197, 90, 42, 0.46);
-  background: linear-gradient(180deg, rgba(255, 242, 231, 0.98), rgba(255, 250, 245, 0.96));
+  background: rgba(255, 242, 231, 0.98);
+  box-shadow:
+    0 0 0 1px rgba(197, 90, 42, 0.12),
+    0 10px 24px rgba(124, 55, 18, 0.08);
+}
+
+.result-rail-card--active:hover {
+  border-color: rgba(197, 90, 42, 0.56);
+  background: rgba(255, 234, 220, 0.99);
+  box-shadow:
+    0 0 0 1px rgba(197, 90, 42, 0.16),
+    0 12px 28px rgba(124, 55, 18, 0.1);
 }
 
 .result-rail-card__header {
@@ -481,14 +536,15 @@ input {
   padding: 13px 14px;
   border-radius: 16px;
   border: 1px solid rgba(95, 67, 38, 0.14);
-  background: rgba(255, 252, 248, 0.82);
-  box-shadow: none;
+  background: rgba(255, 254, 251, 0.98);
+  box-shadow: 0 0 0 1px transparent;
 }
 
 .result-rail-snippet__text {
   display: block;
   overflow: hidden;
   line-height: 1.5;
+  line-clamp: 5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
 }
