@@ -19,7 +19,8 @@ cd web
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-PostgreSQL is published on host port `55432` by default. Override it with `POSTGRES_HOST_PORT` in `web/.env` if needed.
+PostgreSQL is published on host port `55422` by default. Override it with `POSTGRES_HOST_PORT` in `web/.env` if needed.
+PostgreSQL binds to `127.0.0.1` by default in Docker-based workflows.
 
 2. Install dependencies:
 
@@ -77,11 +78,19 @@ This starts:
 
 The stack uses these host ports by default:
 
-- frontend: `3000`
-- backend: `4000`
-- PostgreSQL: `55432`
+- frontend: `3222`
+- backend: `4222`
+- PostgreSQL: `55422`
 
-If the VM already has something bound to `3000` or `4000`, change `FRONTEND_HOST_PORT` or `BACKEND_HOST_PORT` in `web/.env` before starting the stack.
+These defaults are project-specific so they do not collide with the more typical `3000`, `4000`, and `5432` ports already used elsewhere on the host.
+
+For nginx deployments on the same VM, the published Docker ports default to `127.0.0.1` only:
+
+- `FRONTEND_BIND_IP=127.0.0.1`
+- `BACKEND_BIND_IP=127.0.0.1`
+- `POSTGRES_BIND_IP=127.0.0.1`
+
+If you intentionally want direct remote access to one of those services, change the matching bind IP to `0.0.0.0`.
 
 On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also creates the schema on startup, so the API can start cleanly even before the import job finishes.
 
@@ -101,7 +110,7 @@ To connect to PostgreSQL from the VM host or another tool:
 
 ```text
 Host: <vm-ip-or-hostname>
-Port: 55432
+Port: 55422
 Database: niilo22
 User: niilo22
 Password: niilo22
