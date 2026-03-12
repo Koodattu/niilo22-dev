@@ -61,7 +61,7 @@ input {
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1.56fr) minmax(540px, 1.14fr);
+  grid-template-columns: minmax(0, 1.87fr) minmax(540px, 1fr);
   gap: 18px;
   height: 100%;
   background: transparent;
@@ -204,7 +204,6 @@ input {
   padding-bottom: 0;
 }
 
-
 .stage-snippets {
   display: flex;
   gap: 10px;
@@ -294,7 +293,9 @@ input {
 
   .result-rail-card--active:hover:has(.result-rail-snippet:hover) {
     border-color: rgba(197, 90, 42, 0.46);
-    box-shadow: 0 0 0 1px rgba(197, 90, 42, 0.12), 0 10px 24px rgba(124, 55, 18, 0.08);
+    box-shadow:
+      0 0 0 1px rgba(197, 90, 42, 0.12),
+      0 10px 24px rgba(124, 55, 18, 0.08);
     background: rgba(255, 242, 231, 0.98);
   }
 }
@@ -328,7 +329,9 @@ input {
 .search-form__button:hover:not(:disabled),
 .stage-link:hover {
   filter: brightness(1.04);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset, 0 10px 24px rgba(124, 55, 18, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    0 10px 24px rgba(124, 55, 18, 0.12);
 }
 
 .search-form__row {

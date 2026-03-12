@@ -5,8 +5,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import type { SearchResponse, SearchSnippet, SearchVideoResult } from "./search-types";
 
-const MATCH_LEAD_SECONDS = 5;
-const MATCH_TAIL_SECONDS = 5;
+const MATCH_LEAD_SECONDS = 3;
+const MATCH_TAIL_SECONDS = 6;
 const MIN_PLAYBACK_WINDOW_SECONDS = 10;
 
 function formatTimestamp(startSeconds: number): string {
@@ -27,6 +27,15 @@ function formatDate(value: string): string {
     month: "short",
     day: "numeric",
   }).format(new Date(value));
+}
+
+function parseSnippetId(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(value, 10);
+  return Number.isNaN(parsedValue) ? null : parsedValue;
 }
 
 function withPlaybackWindow(videoId: string, snippet: SearchSnippet, autoplayEnabled: boolean): string {
@@ -59,6 +68,8 @@ export function SearchExperience() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") ?? "";
   const initialAutoplayEnabled = searchParams.get("autoplay") !== "0";
+  const selectedResultId = searchParams.get("result");
+  const selectedSnippetId = parseSnippetId(searchParams.get("snippet"));
 
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchVideoResult[]>([]);
@@ -77,8 +88,9 @@ export function SearchExperience() {
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
   const playbackWindow = useMemo(() => (activeSnippet ? getPlaybackWindow(activeSnippet) : null), [activeSnippet]);
 
-  function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean): void {
-    const params = new URLSearchParams(searchParams.toString());
+  function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean, nextResultId?: string | null, nextSnippetId?: number | null): void {
+    const currentSearch = typeof window === "undefined" ? searchParams.toString() : window.location.search;
+    const params = new URLSearchParams(currentSearch.startsWith("?") ? currentSearch.slice(1) : currentSearch);
 
     if (nextQuery !== undefined) {
       const trimmedQuery = nextQuery.trim();
@@ -92,6 +104,22 @@ export function SearchExperience() {
 
     if (nextAutoplayEnabled !== undefined) {
       params.set("autoplay", nextAutoplayEnabled ? "1" : "0");
+    }
+
+    if (nextResultId !== undefined) {
+      if (nextResultId) {
+        params.set("result", nextResultId);
+      } else {
+        params.delete("result");
+      }
+    }
+
+    if (nextSnippetId !== undefined) {
+      if (nextSnippetId !== null) {
+        params.set("snippet", String(nextSnippetId));
+      } else {
+        params.delete("snippet");
+      }
     }
 
     const nextSearch = params.toString();
@@ -108,7 +136,7 @@ export function SearchExperience() {
       return;
     }
 
-    void runSearch(initialQuery, false);
+    void runSearch(initialQuery, false, selectedResultId, selectedSnippetId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -154,7 +182,7 @@ export function SearchExperience() {
     const timeoutId = window.setTimeout(() => {
       const nextSnippet = activeResult.snippets[currentSnippetIndex + 1];
       if (nextSnippet) {
-        setActiveSnippetId(nextSnippet.chunkId);
+        selectVideo(activeResult, nextSnippet);
         return;
       }
 
@@ -172,7 +200,7 @@ export function SearchExperience() {
     };
   }, [activeResult, activeSnippet, autoplayEnabled, deferredResults, playbackWindow]);
 
-  async function runSearch(nextQuery: string, updateUrl: boolean): Promise<void> {
+  async function runSearch(nextQuery: string, updateUrl: boolean, preferredResultId?: string | null, preferredSnippetId?: number | null): Promise<void> {
     if (isLoading) {
       return;
     }
@@ -184,10 +212,12 @@ export function SearchExperience() {
       setTookMs(0);
       setHasSearched(false);
       setError(null);
-      updateAutoplayEnabled(false);
+      setActiveVideoId(null);
+      setActiveSnippetId(null);
+      setAutoplayEnabled(false);
 
       if (updateUrl) {
-        replaceSearchParams("", false);
+        replaceSearchParams("", false, null, null);
       }
 
       return;
@@ -215,13 +245,24 @@ export function SearchExperience() {
       }
 
       const payload = (await response.json()) as SearchResponse;
+      const nextActiveResult = preferredResultId
+        ? (payload.results.find((result) => result.videoId === preferredResultId) ?? payload.results[0] ?? null)
+        : (payload.results[0] ?? null);
+      const nextActiveSnippet = nextActiveResult
+        ? preferredSnippetId !== null && preferredSnippetId !== undefined
+          ? (nextActiveResult.snippets.find((snippet) => snippet.chunkId === preferredSnippetId) ?? nextActiveResult.snippets[0] ?? null)
+          : (nextActiveResult.snippets[0] ?? null)
+        : null;
+
       startTransition(() => {
         setResults(payload.results);
         setResultCount(payload.resultCount);
         setTookMs(payload.tookMs);
-        setActiveVideoId(payload.results[0]?.videoId ?? null);
-        setActiveSnippetId(payload.results[0]?.snippets[0]?.chunkId ?? null);
+        setActiveVideoId(nextActiveResult?.videoId ?? null);
+        setActiveSnippetId(nextActiveSnippet?.chunkId ?? null);
       });
+
+      replaceSearchParams(trimmedQuery, autoplayEnabled, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Search request failed unexpectedly.");
       setResults([]);
@@ -229,7 +270,8 @@ export function SearchExperience() {
       setTookMs(0);
       setActiveVideoId(null);
       setActiveSnippetId(null);
-      updateAutoplayEnabled(false);
+      setAutoplayEnabled(false);
+      replaceSearchParams(trimmedQuery, false, null, null);
     } finally {
       setIsLoading(false);
     }
@@ -241,8 +283,11 @@ export function SearchExperience() {
   }
 
   function selectVideo(result: SearchVideoResult, snippet?: SearchSnippet): void {
+    const nextSnippetId = snippet?.chunkId ?? result.snippets[0]?.chunkId ?? null;
+
     setActiveVideoId(result.videoId);
-    setActiveSnippetId(snippet?.chunkId ?? result.snippets[0]?.chunkId ?? null);
+    setActiveSnippetId(nextSnippetId);
+    replaceSearchParams(undefined, undefined, result.videoId, nextSnippetId);
   }
 
   function handleResultCardKeyDown(event: React.KeyboardEvent<HTMLElement>, result: SearchVideoResult): void {
@@ -312,7 +357,7 @@ export function SearchExperience() {
                     key={snippet.chunkId}
                     type="button"
                     className={`stage-snippet${isActive ? " stage-snippet--active" : ""}`}
-                    onClick={() => setActiveSnippetId(snippet.chunkId)}
+                    onClick={() => selectVideo(activeResult, snippet)}
                   >
                     <span className="stage-snippet__time">{formatTimestamp(snippet.startSeconds)}</span>
                     <span className="stage-snippet__text">{snippet.text}</span>
