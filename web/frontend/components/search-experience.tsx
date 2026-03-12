@@ -29,14 +29,14 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-function withPlaybackWindow(videoId: string, snippet: SearchSnippet): string {
+function withPlaybackWindow(videoId: string, snippet: SearchSnippet, autoplayEnabled: boolean): string {
   const playbackStartSeconds = Math.max(0, snippet.startSeconds - MATCH_LEAD_SECONDS);
   const playbackEndSeconds = Math.max(playbackStartSeconds + MIN_PLAYBACK_WINDOW_SECONDS, snippet.endSeconds + MATCH_TAIL_SECONDS);
   const url = new URL(`https://www.youtube.com/embed/${videoId}`);
 
   url.searchParams.set("start", String(playbackStartSeconds));
   url.searchParams.set("end", String(playbackEndSeconds));
-  url.searchParams.set("autoplay", "1");
+  url.searchParams.set("autoplay", autoplayEnabled ? "1" : "0");
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("rel", "0");
   return url.toString();
@@ -258,7 +258,7 @@ export function SearchExperience() {
               <iframe
                 key={`${activeResult.videoId}-${activeSnippet.chunkId}`}
                 className="stage-video"
-                src={withPlaybackWindow(activeResult.videoId, activeSnippet)}
+                src={withPlaybackWindow(activeResult.videoId, activeSnippet, autoplayEnabled)}
                 title={activeResult.title}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
