@@ -48,6 +48,8 @@ services:
       context: ..
       dockerfile: web/backend/Dockerfile
     restart: "no"
+    profiles:
+      - import
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-niilo22}:${POSTGRES_PASSWORD:-niilo22}@db:5432/${POSTGRES_DB:-niilo22}
       VIDEOS_JSON_PATH: /app/data/videos.json

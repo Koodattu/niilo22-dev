@@ -26,6 +26,10 @@ interface SourceSummaryRow extends QueryResultRow {
   max_chunk_created_at: string | null;
 }
 
+interface ImportStateRow extends QueryResultRow {
+  source_signature: string;
+}
+
 interface SummaryRow extends QueryResultRow {
   metrics: AnalyticsSummary;
   refreshed_at: string;
@@ -125,6 +129,15 @@ function buildTopEntries(counts: Map<string, number>, limit: number): AnalyticsM
 }
 
 async function loadSourceSummary(client: PoolClient): Promise<SourceSummary> {
+  const importStateResult = await client.query<ImportStateRow>(
+    `
+      SELECT source_signature
+      FROM import_state
+      WHERE job_name = 'full-import'
+      LIMIT 1
+    `,
+  );
+
   const { rows } = await client.query<SourceSummaryRow>(`
     SELECT
       (SELECT COUNT(*) FROM videos) AS total_videos,
@@ -146,7 +159,7 @@ async function loadSourceSummary(client: PoolClient): Promise<SourceSummary> {
   }
 
   return {
-    signature: buildSourceSignature(row),
+    signature: importStateResult.rows[0]?.source_signature ?? buildSourceSignature(row),
     totalVideos: toNumber(row.total_videos),
     totalChunks: toNumber(row.total_chunks),
     totalTranscriptWords: toNumber(row.total_transcript_words),

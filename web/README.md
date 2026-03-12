@@ -92,7 +92,15 @@ For nginx deployments on the same VM, the published Docker ports default to `127
 
 If you intentionally want direct remote access to one of those services, change the matching bind IP to `0.0.0.0`.
 
-On the first boot, the `importer` container reads `../videos.json` and `../output/*.json` and writes them into PostgreSQL automatically. The backend also applies the ordered SQL files in `db/migrations` on startup, so the API can start cleanly even before the import job finishes.
+The backend applies the ordered SQL files in `db/migrations` on startup. The importer is an opt-in one-shot job and is not started by default on every `docker compose up`.
+
+To run the import manually:
+
+```powershell
+docker compose --profile import up importer
+```
+
+The importer stores a source signature in PostgreSQL and skips the expensive full import when the current `videos.json` plus transcript file metadata match the last successful import.
 
 To follow the initial import:
 
@@ -103,7 +111,7 @@ docker compose logs -f importer
 To re-run the import manually later:
 
 ```powershell
-docker compose run --rm importer
+docker compose --profile import up importer
 ```
 
 To connect to PostgreSQL from the VM host or another tool:

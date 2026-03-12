@@ -632,9 +632,12 @@ input {
 }
 
 .analytics-page-shell {
-  height: auto;
-  min-height: 100svh;
+  height: 100svh;
+  max-height: 100svh;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .analytics-hero,
