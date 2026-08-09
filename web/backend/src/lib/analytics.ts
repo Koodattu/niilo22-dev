@@ -18,16 +18,13 @@ interface QueryRow extends QueryResultRow {
   query_count: number | string;
 }
 
-interface SourceSummaryRow extends QueryResultRow {
+interface RefreshSummaryRow extends QueryResultRow {
   total_videos: number | string;
   total_chunks: number | string;
   total_transcript_words: number | string;
-  max_video_updated_at: string | null;
-  max_chunk_created_at: string | null;
-}
-
-interface ImportStateRow extends QueryResultRow {
-  source_signature: string;
+  unique_words: number | string;
+  unique_bigrams: number | string;
+  unique_trigrams: number | string;
 }
 
 interface SummaryRow extends QueryResultRow {
@@ -38,26 +35,6 @@ interface SummaryRow extends QueryResultRow {
 interface TermRow extends QueryResultRow {
   term: string;
   occurrence_count: number | string;
-}
-
-interface NormalizedChunkRow extends QueryResultRow {
-  normalized_text: string;
-}
-
-interface SourceSummary {
-  signature: string;
-  totalVideos: number;
-  totalChunks: number;
-  totalTranscriptWords: number;
-}
-
-interface AggregatedTermSet {
-  uniqueWords: number;
-  uniqueBigrams: number;
-  uniqueTrigrams: number;
-  words: AnalyticsMetricEntry[];
-  bigrams: AnalyticsMetricEntry[];
-  trigrams: AnalyticsMetricEntry[];
 }
 
 export interface AnalyticsMetricEntry {
@@ -98,202 +75,191 @@ function toNumber(value: number | string | null | undefined): number {
   return 0;
 }
 
-function buildSourceSignature(row: SourceSummaryRow): string {
-  return [
-    toNumber(row.total_videos),
-    toNumber(row.total_chunks),
-    toNumber(row.total_transcript_words),
-    row.max_video_updated_at ?? "epoch",
-    row.max_chunk_created_at ?? "epoch",
-  ].join(":");
-}
-
-function incrementCount(counts: Map<string, number>, key: string): void {
-  counts.set(key, (counts.get(key) ?? 0) + 1);
-}
-
-function buildTopEntries(counts: Map<string, number>, limit: number): AnalyticsMetricEntry[] {
-  return [...counts.entries()]
-    .sort((left, right) => {
-      if (right[1] !== left[1]) {
-        return right[1] - left[1];
-      }
-
-      return left[0].localeCompare(right[0]);
-    })
-    .slice(0, limit)
-    .map(([label, count]) => ({
-      label,
-      count,
-    }));
-}
-
-async function loadSourceSummary(client: PoolClient): Promise<SourceSummary> {
-  const importStateResult = await client.query<ImportStateRow>(
+async function loadSnapshotSignature(client: PoolClient): Promise<string | null> {
+  const { rows } = await client.query<{ source_signature: string }>(
     `
       SELECT source_signature
-      FROM import_state
-      WHERE job_name = 'full-import'
+      FROM analytics_summary
+      WHERE snapshot_key = $1
       LIMIT 1
     `,
+    [SNAPSHOT_KEY],
   );
 
-  const { rows } = await client.query<SourceSummaryRow>(`
+  return rows[0]?.source_signature ?? null;
+}
+
+async function populateRefreshTermCounts(client: PoolClient): Promise<void> {
+  await client.query(`
+    CREATE TEMP TABLE analytics_refresh_term_counts (
+      category TEXT NOT NULL,
+      term TEXT NOT NULL,
+      occurrence_count BIGINT NOT NULL
+    ) ON COMMIT DROP
+  `);
+
+  await client.query(`
+    WITH chunk_tokens AS MATERIALIZED (
+      SELECT string_to_array(normalized_text, ' ') AS tokens
+      FROM transcript_chunks
+      WHERE normalized_text <> ''
+    ),
+    ngrams AS (
+      SELECT
+        'word'::text AS category,
+        chunk.tokens[token_position.value] AS term
+      FROM chunk_tokens AS chunk
+      CROSS JOIN LATERAL generate_subscripts(chunk.tokens, 1) AS token_position(value)
+
+      UNION ALL
+
+      SELECT
+        'bigram'::text AS category,
+        chunk.tokens[token_position.value] || ' ' || chunk.tokens[token_position.value + 1] AS term
+      FROM chunk_tokens AS chunk
+      CROSS JOIN LATERAL generate_subscripts(chunk.tokens, 1) AS token_position(value)
+      WHERE token_position.value < cardinality(chunk.tokens)
+
+      UNION ALL
+
+      SELECT
+        'trigram'::text AS category,
+        chunk.tokens[token_position.value] || ' ' || chunk.tokens[token_position.value + 1] || ' ' || chunk.tokens[token_position.value + 2] AS term
+      FROM chunk_tokens AS chunk
+      CROSS JOIN LATERAL generate_subscripts(chunk.tokens, 1) AS token_position(value)
+      WHERE token_position.value + 2 <= cardinality(chunk.tokens)
+    )
+    INSERT INTO analytics_refresh_term_counts (
+      category,
+      term,
+      occurrence_count
+    )
+    SELECT
+      category,
+      term,
+      COUNT(*) AS occurrence_count
+    FROM ngrams
+    GROUP BY category, term
+  `);
+}
+
+async function replaceSnapshotEntries(client: PoolClient, sourceSignature: string): Promise<void> {
+  await client.query("DELETE FROM analytics_term_frequencies");
+
+  await client.query(
+    `
+      WITH ranked_terms AS (
+        SELECT
+          category,
+          term,
+          occurrence_count,
+          ROW_NUMBER() OVER (
+            PARTITION BY category
+            ORDER BY occurrence_count DESC, term ASC
+          ) AS term_rank
+        FROM analytics_refresh_term_counts
+      )
+      INSERT INTO analytics_term_frequencies (
+        category,
+        term,
+        occurrence_count,
+        source_signature,
+        refreshed_at
+      )
+      SELECT
+        category,
+        term,
+        occurrence_count,
+        $2,
+        NOW()
+      FROM ranked_terms
+      WHERE term_rank <= $1
+    `,
+    [SNAPSHOT_LIMIT, sourceSignature],
+  );
+}
+
+async function loadRefreshSummary(client: PoolClient): Promise<RefreshSummaryRow> {
+  const { rows } = await client.query<RefreshSummaryRow>(`
     SELECT
       (SELECT COUNT(*) FROM videos) AS total_videos,
       (SELECT COUNT(*) FROM transcript_chunks) AS total_chunks,
       (SELECT COALESCE(SUM(transcript_word_count), 0) FROM videos) AS total_transcript_words,
-      (SELECT COALESCE(MAX(updated_at), 'epoch'::timestamptz)::text FROM videos) AS max_video_updated_at,
-      (SELECT COALESCE(MAX(created_at), 'epoch'::timestamptz)::text FROM transcript_chunks) AS max_chunk_created_at
+      COUNT(*) FILTER (WHERE category = 'word') AS unique_words,
+      COUNT(*) FILTER (WHERE category = 'bigram') AS unique_bigrams,
+      COUNT(*) FILTER (WHERE category = 'trigram') AS unique_trigrams
+    FROM analytics_refresh_term_counts
   `);
 
-  const row = rows[0];
-
-  if (!row) {
-    return {
-      signature: "0:0:0:epoch:epoch",
-      totalVideos: 0,
-      totalChunks: 0,
-      totalTranscriptWords: 0,
-    };
-  }
-
-  return {
-    signature: importStateResult.rows[0]?.source_signature ?? buildSourceSignature(row),
-    totalVideos: toNumber(row.total_videos),
-    totalChunks: toNumber(row.total_chunks),
-    totalTranscriptWords: toNumber(row.total_transcript_words),
-  };
-}
-
-async function collectCorpusAnalytics(client: PoolClient): Promise<AggregatedTermSet> {
-  const { rows } = await client.query<NormalizedChunkRow>(`
-    SELECT normalized_text
-    FROM transcript_chunks
-    WHERE normalized_text <> ''
-  `);
-
-  const wordCounts = new Map<string, number>();
-  const bigramCounts = new Map<string, number>();
-  const trigramCounts = new Map<string, number>();
-
-  for (const row of rows) {
-    const tokens = row.normalized_text
-      .split(" ")
-      .map((token) => token.trim())
-      .filter(Boolean);
-
-    for (let index = 0; index < tokens.length; index += 1) {
-      const firstToken = tokens[index];
-
-      if (!firstToken) {
-        continue;
-      }
-
-      incrementCount(wordCounts, firstToken);
-
-      const secondToken = tokens[index + 1];
-      if (secondToken) {
-        incrementCount(bigramCounts, `${firstToken} ${secondToken}`);
-      }
-
-      const thirdToken = tokens[index + 2];
-      if (secondToken && thirdToken) {
-        incrementCount(trigramCounts, `${firstToken} ${secondToken} ${thirdToken}`);
-      }
+  return (
+    rows[0] ?? {
+      total_videos: 0,
+      total_chunks: 0,
+      total_transcript_words: 0,
+      unique_words: 0,
+      unique_bigrams: 0,
+      unique_trigrams: 0,
     }
-  }
-
-  return {
-    uniqueWords: wordCounts.size,
-    uniqueBigrams: bigramCounts.size,
-    uniqueTrigrams: trigramCounts.size,
-    words: buildTopEntries(wordCounts, SNAPSHOT_LIMIT),
-    bigrams: buildTopEntries(bigramCounts, SNAPSHOT_LIMIT),
-    trigrams: buildTopEntries(trigramCounts, SNAPSHOT_LIMIT),
-  };
+  );
 }
 
-async function insertSnapshotEntries(client: PoolClient, category: "word" | "bigram" | "trigram", entries: AnalyticsMetricEntry[], sourceSignature: string): Promise<void> {
-  for (const entry of entries) {
-    await client.query(
-      `
-        INSERT INTO analytics_term_frequencies (
-          category,
-          term,
-          occurrence_count,
-          source_signature,
-          refreshed_at
-        )
-        VALUES ($1, $2, $3, $4, NOW())
-      `,
-      [category, entry.label, entry.count, sourceSignature],
-    );
-  }
+async function writeSnapshotSummary(client: PoolClient, sourceSignature: string, summary: RefreshSummaryRow): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO analytics_summary (
+        snapshot_key,
+        metrics,
+        source_signature,
+        refreshed_at
+      )
+      VALUES ($1, $2::jsonb, $3, NOW())
+      ON CONFLICT (snapshot_key) DO UPDATE
+      SET metrics = EXCLUDED.metrics,
+          source_signature = EXCLUDED.source_signature,
+          refreshed_at = EXCLUDED.refreshed_at
+    `,
+    [
+      SNAPSHOT_KEY,
+      JSON.stringify({
+        totalVideos: toNumber(summary.total_videos),
+        totalTranscriptChunks: toNumber(summary.total_chunks),
+        totalTranscriptWords: toNumber(summary.total_transcript_words),
+        uniqueWords: toNumber(summary.unique_words),
+        uniqueBigrams: toNumber(summary.unique_bigrams),
+        uniqueTrigrams: toNumber(summary.unique_trigrams),
+      }),
+      sourceSignature,
+    ],
+  );
 }
 
-async function ensureAnalyticsSnapshot(): Promise<void> {
+export async function refreshAnalyticsSnapshot(sourceSignature: string): Promise<boolean> {
+  const normalizedSourceSignature = sourceSignature.trim();
+  if (!normalizedSourceSignature) {
+    throw new Error("Analytics source signature is required");
+  }
+
   const client = await pool.connect();
   let transactionStarted = false;
 
   try {
     await client.query("SELECT pg_advisory_lock($1, $2)", [ANALYTICS_LOCK_NAMESPACE, ANALYTICS_LOCK_KEY]);
 
-    const sourceSummary = await loadSourceSummary(client);
-    const existingSummary = await client.query<{ source_signature: string }>(
-      `
-        SELECT source_signature
-        FROM analytics_summary
-        WHERE snapshot_key = $1
-        LIMIT 1
-      `,
-      [SNAPSHOT_KEY],
-    );
-
-    if (existingSummary.rows[0]?.source_signature === sourceSummary.signature) {
-      return;
+    if ((await loadSnapshotSignature(client)) === normalizedSourceSignature) {
+      return false;
     }
 
     await client.query("BEGIN");
     transactionStarted = true;
-    await client.query("DELETE FROM analytics_term_frequencies");
 
-    const aggregatedTerms = await collectCorpusAnalytics(client);
-
-    await insertSnapshotEntries(client, "word", aggregatedTerms.words, sourceSummary.signature);
-    await insertSnapshotEntries(client, "bigram", aggregatedTerms.bigrams, sourceSummary.signature);
-    await insertSnapshotEntries(client, "trigram", aggregatedTerms.trigrams, sourceSummary.signature);
-
-    await client.query(
-      `
-        INSERT INTO analytics_summary (
-          snapshot_key,
-          metrics,
-          source_signature,
-          refreshed_at
-        )
-        VALUES ($1, $2::jsonb, $3, NOW())
-        ON CONFLICT (snapshot_key) DO UPDATE
-        SET metrics = EXCLUDED.metrics,
-            source_signature = EXCLUDED.source_signature,
-            refreshed_at = EXCLUDED.refreshed_at
-      `,
-      [
-        SNAPSHOT_KEY,
-        JSON.stringify({
-          totalVideos: sourceSummary.totalVideos,
-          totalTranscriptChunks: sourceSummary.totalChunks,
-          totalTranscriptWords: sourceSummary.totalTranscriptWords,
-          uniqueWords: aggregatedTerms.uniqueWords,
-          uniqueBigrams: aggregatedTerms.uniqueBigrams,
-          uniqueTrigrams: aggregatedTerms.uniqueTrigrams,
-        }),
-        sourceSummary.signature,
-      ],
-    );
+    await populateRefreshTermCounts(client);
+    await replaceSnapshotEntries(client, normalizedSourceSignature);
+    const summary = await loadRefreshSummary(client);
+    await writeSnapshotSummary(client, normalizedSourceSignature, summary);
 
     await client.query("COMMIT");
     transactionStarted = false;
+    return true;
   } catch (error) {
     if (transactionStarted) {
       await client.query("ROLLBACK");
@@ -370,7 +336,6 @@ export async function recordSearchQuery(rawQuery: string): Promise<void> {
 
 export async function loadAnalytics(limit = 12): Promise<AnalyticsResponse> {
   const safeLimit = Math.max(1, Math.min(limit, 25));
-  await ensureAnalyticsSnapshot();
 
   const [summaryResult, querySummaryResult, queries, words, bigrams, trigrams] = await Promise.all([
     query<SummaryRow>(

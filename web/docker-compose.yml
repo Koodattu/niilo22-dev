@@ -34,6 +34,7 @@ services:
       VIDEOS_JSON_PATH: /app/data/videos.json
       OUTPUT_DIR: /app/data/output
       MIGRATION_PATH: /app/db/migrations
+      SEARCH_DATA_VERSION_PATH: /app/.cache/search-data-version.txt
     depends_on:
       db:
         condition: service_healthy
@@ -42,6 +43,7 @@ services:
     volumes:
       - ../videos.json:/app/data/videos.json:ro
       - ../output:/app/data/output:ro
+      - niilo22_search_cache:/app/.cache
 
   importer:
     build:
@@ -55,6 +57,7 @@ services:
       VIDEOS_JSON_PATH: /app/data/videos.json
       OUTPUT_DIR: /app/data/output
       MIGRATION_PATH: /app/db/migrations
+      SEARCH_DATA_VERSION_PATH: /app/.cache/search-data-version.txt
     depends_on:
       db:
         condition: service_healthy
@@ -62,6 +65,7 @@ services:
     volumes:
       - ../videos.json:/app/data/videos.json:ro
       - ../output:/app/data/output:ro
+      - niilo22_search_cache:/app/.cache
 
   frontend:
     build:
@@ -78,3 +82,4 @@ services:
 
 volumes:
   niilo22_postgres:
+  niilo22_search_cache:

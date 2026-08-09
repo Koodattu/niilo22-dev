@@ -169,7 +169,9 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
       headers: {
         Accept: "application/json",
       },
-      cache: "no-store",
+      next: {
+        revalidate: 300,
+      },
     });
   } catch {
     return null;

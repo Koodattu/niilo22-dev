@@ -73,7 +73,6 @@ This starts:
 
 - PostgreSQL
 - Fastify backend
-- importer job for `videos.json` and `output/*.json`
 - Next.js frontend
 
 The stack uses these host ports by default:
@@ -100,7 +99,7 @@ To run the import manually:
 docker compose --profile import up importer
 ```
 
-The importer stores a source signature in PostgreSQL and skips the expensive full import when the current `videos.json` plus transcript file metadata match the last successful import.
+The importer stores a source signature in PostgreSQL and skips the expensive full import when the current `videos.json` plus transcript file metadata match the last successful import. It also refreshes the stored analytics snapshot after changed data is imported, or repairs a missing snapshot without repeating an unchanged import.
 
 To follow the initial import:
 

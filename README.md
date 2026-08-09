@@ -304,7 +304,7 @@ The production-style stack uses these host ports by default:
 
 The published Docker ports default to `127.0.0.1`, which is suitable for nginx or another reverse proxy on the same VM. Change the relevant bind IP to `0.0.0.0` only if you intentionally want direct remote access.
 
-The importer is opt-in and does not run on every `docker compose up`. Run it manually:
+The importer is opt-in and does not run on every `docker compose up`. It refreshes the stored analytics snapshot after changed data is imported, or repairs a missing snapshot without repeating an unchanged import. Run it manually:
 
 ```powershell
 docker compose --profile import up importer

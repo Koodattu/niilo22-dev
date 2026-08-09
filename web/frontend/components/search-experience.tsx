@@ -195,15 +195,13 @@ export function SearchExperience() {
 
   useEffect(() => {
     async function bootstrapFromUrl(): Promise<void> {
-      if (selectedResultId) {
-        await loadSelectedVideo(selectedResultId, selectedSnippetId, {
-          queryToKeep: initialQuery,
-          syncUrl: !initialQuery.trim(),
-        });
-      }
-
       if (initialQuery.trim()) {
         await runSearch(initialQuery, false, selectedResultId, selectedSnippetId);
+        return;
+      }
+
+      if (selectedResultId) {
+        await loadSelectedVideo(selectedResultId, selectedSnippetId);
       }
     }
 
@@ -364,14 +362,7 @@ export function SearchExperience() {
     }
   }
 
-  async function loadSelectedVideo(
-    videoId: string,
-    preferredSnippetId?: number | null,
-    options?: {
-      queryToKeep?: string;
-      syncUrl?: boolean;
-    },
-  ): Promise<void> {
+  async function loadSelectedVideo(videoId: string, preferredSnippetId?: number | null): Promise<void> {
     if (isLoading) {
       return;
     }
@@ -379,7 +370,7 @@ export function SearchExperience() {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
-    setQuery(options?.queryToKeep ?? "");
+    setQuery("");
     setManualAutoplaySelection(null);
 
     try {
@@ -417,9 +408,7 @@ export function SearchExperience() {
         setActiveSnippetId(nextActiveSnippet?.chunkId ?? null);
       });
 
-      if (options?.syncUrl ?? true) {
-        replaceSearchParams(options?.queryToKeep ?? "", true, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
-      }
+      replaceSearchParams("", true, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Shared video request failed unexpectedly.");
       setResults([]);

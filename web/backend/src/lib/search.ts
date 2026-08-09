@@ -7,8 +7,8 @@ import { readSearchDataVersion } from "./search-data-version.js";
 
 interface TopVideoRow {
   video_id: string;
-  match_count: number;
-  phrase_count: number;
+  match_count: number | string;
+  phrase_count: number | string;
 }
 
 interface ChunkRow {
@@ -107,11 +107,11 @@ function roundDuration(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
-function buildCacheKey(rawQuery: string, limit: number, snippetsPerVideo: number): string {
-  return [rawQuery, limit, snippetsPerVideo].join("\u0000");
+function buildCacheKey(normalizedQuery: string, limit: number, snippetsPerVideo: number): string {
+  return [normalizedQuery, limit, snippetsPerVideo].join("\u0000");
 }
 
-function reuseCachedResponse(cacheKey: string, startedAt: number): SearchResponse | null {
+function reuseCachedResponse(cacheKey: string, rawQuery: string, normalizedQuery: string, startedAt: number): SearchResponse | null {
   const cachedResponse = searchResultCache.get(cacheKey);
   if (!cachedResponse) {
     return null;
@@ -122,6 +122,8 @@ function reuseCachedResponse(cacheKey: string, startedAt: number): SearchRespons
 
   return {
     ...cachedResponse,
+    query: rawQuery,
+    normalizedQuery,
     tookMs: roundDuration(startedAt),
   };
 }
@@ -162,9 +164,8 @@ async function synchronizeSearchCache(): Promise<string> {
 // Two-phase search: find top videos by FTS match count, then fetch their matching chunks.
 // Uses Finnish Snowball stemmer for morphology-aware full-text search.
 // For multi-word queries, uses phrase proximity matching to prefer exact phrase matches.
-async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: number): Promise<SearchResponse> {
+async function executeSearch(rawQuery: string, normalizedQuery: string, limit: number, snippetsPerVideo: number): Promise<SearchResponse> {
   const startedAt = performance.now();
-  const normalizedQuery = normalizeSearchText(rawQuery);
 
   if (normalizedQuery.length < 2) {
     return {
@@ -191,7 +192,7 @@ async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: 
       FROM transcript_chunks
       WHERE search_vector @@ websearch_to_tsquery('finnish', $1)
       GROUP BY video_id
-      ORDER BY phrase_count DESC, match_count DESC
+      ORDER BY phrase_count DESC, match_count DESC, video_id ASC
       LIMIT $2
     `
     : `
@@ -199,7 +200,7 @@ async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: 
       FROM transcript_chunks
       WHERE search_vector @@ websearch_to_tsquery('finnish', $1)
       GROUP BY video_id
-      ORDER BY match_count DESC
+      ORDER BY match_count DESC, video_id ASC
       LIMIT $2
     `;
 
@@ -218,45 +219,94 @@ async function executeSearch(rawQuery: string, limit: number, snippetsPerVideo: 
   // Phase 2: Get matching chunks for the top videos only.
   // For multi-word queries, chunks matching the phrase query rank above word-only matches.
   const videoIds = topVideos.map((row) => row.video_id);
+  const candidateLimitPerVideo = Math.max(snippetsPerVideo * 4, snippetsPerVideo + 4);
   const chunksSql = usePhrase
     ? `
+      WITH scored_chunks AS (
+        SELECT
+          c.id AS chunk_id,
+          c.video_id,
+          v.title,
+          v.published_at,
+          v.transcript_word_count,
+          c.start_ms,
+          c.end_ms,
+          c.text,
+          ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
+          CASE WHEN c.search_vector @@ phraseto_tsquery('finnish', $1) THEN 1.0 ELSE 0.0 END AS phrase_match
+        FROM transcript_chunks c
+        JOIN videos v ON v.youtube_id = c.video_id
+        WHERE c.video_id = ANY($2)
+          AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
+      ),
+      ranked_chunks AS (
+        SELECT
+          scored_chunks.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY video_id
+            ORDER BY phrase_match DESC, lexical_score DESC, start_ms ASC, chunk_id ASC
+          ) AS candidate_rank
+        FROM scored_chunks
+      )
       SELECT
-        c.id AS chunk_id,
-        c.video_id,
-        v.title,
-        v.published_at,
-        v.transcript_word_count,
-        c.start_ms,
-        c.end_ms,
-        c.text,
-        ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
-        CASE WHEN c.search_vector @@ phraseto_tsquery('finnish', $1) THEN 1.0 ELSE 0.0 END AS phrase_match
-      FROM transcript_chunks c
-      JOIN videos v ON v.youtube_id = c.video_id
-      WHERE c.video_id = ANY($2)
-        AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
-      ORDER BY phrase_match DESC, lexical_score DESC, c.start_ms ASC
+        chunk_id,
+        video_id,
+        title,
+        published_at,
+        transcript_word_count,
+        start_ms,
+        end_ms,
+        text,
+        lexical_score,
+        phrase_match
+      FROM ranked_chunks
+      WHERE candidate_rank <= $3
+      ORDER BY phrase_match DESC, lexical_score DESC, start_ms ASC, chunk_id ASC
     `
     : `
+      WITH scored_chunks AS (
+        SELECT
+          c.id AS chunk_id,
+          c.video_id,
+          v.title,
+          v.published_at,
+          v.transcript_word_count,
+          c.start_ms,
+          c.end_ms,
+          c.text,
+          ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
+          0.0 AS phrase_match
+        FROM transcript_chunks c
+        JOIN videos v ON v.youtube_id = c.video_id
+        WHERE c.video_id = ANY($2)
+          AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
+      ),
+      ranked_chunks AS (
+        SELECT
+          scored_chunks.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY video_id
+            ORDER BY lexical_score DESC, start_ms ASC, chunk_id ASC
+          ) AS candidate_rank
+        FROM scored_chunks
+      )
       SELECT
-        c.id AS chunk_id,
-        c.video_id,
-        v.title,
-        v.published_at,
-        v.transcript_word_count,
-        c.start_ms,
-        c.end_ms,
-        c.text,
-        ts_rank_cd(c.search_vector, websearch_to_tsquery('finnish', $1))::double precision AS lexical_score,
-        0.0 AS phrase_match
-      FROM transcript_chunks c
-      JOIN videos v ON v.youtube_id = c.video_id
-      WHERE c.video_id = ANY($2)
-        AND c.search_vector @@ websearch_to_tsquery('finnish', $1)
-      ORDER BY lexical_score DESC, c.start_ms ASC
+        chunk_id,
+        video_id,
+        title,
+        published_at,
+        transcript_word_count,
+        start_ms,
+        end_ms,
+        text,
+        lexical_score,
+        phrase_match
+      FROM ranked_chunks
+      WHERE candidate_rank <= $3
+      ORDER BY lexical_score DESC, start_ms ASC, chunk_id ASC
     `;
 
-  const { rows: chunkRows } = await query<ChunkRow>(chunksSql, [normalizedQuery, videoIds]);
+  const { rows: chunkRows } = await query<ChunkRow>(chunksSql, [normalizedQuery, videoIds, candidateLimitPerVideo]);
 
   // Build a lookup for video ranking signals
   const matchCountByVideo = new Map<string, number>();
@@ -405,9 +455,17 @@ export async function loadSharedVideo(videoId: string, snippetId: number | null 
 
 export async function searchVideos(rawQuery: string, limit = config.searchResultLimit, snippetsPerVideo = config.snippetLimitPerVideo): Promise<SearchResponse> {
   const startedAt = performance.now();
-  const cacheKey = buildCacheKey(rawQuery, limit, snippetsPerVideo);
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 25));
+  const safeSnippetsPerVideo = Math.max(1, Math.floor(snippetsPerVideo));
+
+  if (normalizedQuery.length < 2) {
+    return executeSearch(rawQuery, normalizedQuery, safeLimit, safeSnippetsPerVideo);
+  }
+
+  const cacheKey = buildCacheKey(normalizedQuery, safeLimit, safeSnippetsPerVideo);
   const versionAtStart = await synchronizeSearchCache();
-  const cachedResponse = reuseCachedResponse(cacheKey, startedAt);
+  const cachedResponse = reuseCachedResponse(cacheKey, rawQuery, normalizedQuery, startedAt);
 
   if (cachedResponse) {
     return cachedResponse;
@@ -418,11 +476,13 @@ export async function searchVideos(rawQuery: string, limit = config.searchResult
     const sharedResponse = await sharedSearch;
     return {
       ...sharedResponse,
+      query: rawQuery,
+      normalizedQuery,
       tookMs: roundDuration(startedAt),
     };
   }
 
-  const searchPromise = executeSearch(rawQuery, limit, snippetsPerVideo);
+  const searchPromise = executeSearch(rawQuery, normalizedQuery, safeLimit, safeSnippetsPerVideo);
   inFlightSearches.set(cacheKey, searchPromise);
 
   try {
@@ -435,6 +495,8 @@ export async function searchVideos(rawQuery: string, limit = config.searchResult
 
     return {
       ...response,
+      query: rawQuery,
+      normalizedQuery,
       tookMs: roundDuration(startedAt),
     };
   } finally {

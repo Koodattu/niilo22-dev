@@ -30,6 +30,8 @@ export const metadata: Metadata = {
   description: "Aggregated search and transcript analytics for the Niilo22 archive.",
 };
 
+export const dynamic = "force-dynamic";
+
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("fi-FI").format(value);
 }
@@ -51,7 +53,9 @@ async function loadAnalytics(): Promise<AnalyticsResponse> {
     headers: {
       Accept: "application/json",
     },
-    cache: "no-store",
+    next: {
+      revalidate: 120,
+    },
   });
 
   if (!response.ok) {

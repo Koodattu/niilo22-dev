@@ -31,6 +31,7 @@ COPY --from=production-deps --chown=node:node /app/package.json ./package.json
 COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/db ./db
+RUN mkdir -p /app/.cache && chown node:node /app/.cache
 USER node
 EXPOSE 4000
 CMD ["node", "dist/src/server.js"]

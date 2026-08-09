@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 
 import { config } from "../src/config.js";
 import { pool, withTransaction } from "../src/db.js";
+import { refreshAnalyticsSnapshot } from "../src/lib/analytics.js";
 import { ensureSchema } from "../src/lib/ensure-schema.js";
 import { createTranscriptChunks, type TranscriptWord } from "../src/lib/chunk-transcript.js";
 import { normalizeSearchText } from "../src/lib/normalize.js";
@@ -270,6 +271,9 @@ async function importAllVideos(): Promise<void> {
     toNumber(existingImportState.transcript_file_count) === transcriptIndex.size
   ) {
     console.log(`Skipping import: ${existingVideoCount} videos already imported for source signature ${sourceSignature}`);
+    console.log("Checking analytics snapshot");
+    const analyticsRefreshed = await refreshAnalyticsSnapshot(sourceSignature);
+    console.log(analyticsRefreshed ? "Analytics snapshot refreshed" : "Analytics snapshot is already current");
     return;
   }
 
@@ -301,6 +305,8 @@ async function importAllVideos(): Promise<void> {
 
   await writeImportState(sourceSignature, videosFile.videos.length, transcriptIndex.size);
   await writeSearchDataVersion();
+  console.log("Refreshing analytics snapshot");
+  await refreshAnalyticsSnapshot(sourceSignature);
   console.log(`Import complete: ${processed} videos, ${totalChunks} transcript chunks`);
 }
 

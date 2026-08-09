@@ -32,11 +32,9 @@ export async function registerSearchRoute(app: FastifyInstance): Promise<void> {
 
     const response = await searchVideos(parsedQuery.data.q, parsedQuery.data.limit ?? config.searchResultLimit, config.snippetLimitPerVideo);
 
-    try {
-      await recordSearchQuery(parsedQuery.data.q);
-    } catch (error) {
+    void recordSearchQuery(parsedQuery.data.q).catch((error: unknown) => {
       app.log.warn({ error }, "Failed to record search query analytics");
-    }
+    });
 
     return response;
   });
