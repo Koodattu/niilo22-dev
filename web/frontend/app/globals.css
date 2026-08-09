@@ -668,6 +668,7 @@ input {
   margin: 0;
   font-family: var(--font-heading), serif;
   line-height: 0.96;
+  text-wrap: balance;
 }
 
 .analytics-hero h1 {
@@ -680,6 +681,7 @@ input {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+  text-wrap: pretty;
 }
 
 .analytics-hero__actions {
@@ -726,6 +728,7 @@ input {
 .analytics-metric-card__value {
   font-size: clamp(1.35rem, 2vw, 2rem);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .analytics-grid {
@@ -775,6 +778,7 @@ input {
 .analytics-bar-row__label {
   min-width: 0;
   font-weight: 500;
+  text-wrap: pretty;
 }
 
 .analytics-bar-row__count {
@@ -796,6 +800,33 @@ input {
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent-strong) 0%, #c1784f 100%);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.analytics-year-list {
+  display: grid;
+}
+
+.analytics-year-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 0.55fr) repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(85, 68, 49, 0.12);
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-year-row:first-child {
+  padding-top: 0;
+}
+
+.analytics-year-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.analytics-year-row span {
+  color: var(--muted);
 }
 
 @media (max-width: 1080px) {
@@ -834,6 +865,15 @@ input {
   .analytics-bar-row__meta {
     align-items: start;
     flex-direction: column;
+  }
+
+  .analytics-year-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 14px;
+  }
+
+  .analytics-year-row strong {
+    grid-column: span 2;
   }
 }
 

@@ -1,28 +1,60 @@
 import type { Metadata } from "next";
 
 type AnalyticsMetricEntry = {
+  key?: string;
   label: string;
   count: number;
+};
+
+type AnalyticsVideoEntry = {
+  videoId: string;
+  title: string;
+  wordCount: number;
+};
+
+type AnalyticsYearEntry = {
+  year: number;
+  videoCount: number;
+  wordCount: number;
+  transcriptHours: number;
 };
 
 type AnalyticsSummary = {
   totalVideos: number;
   totalTranscriptChunks: number;
   totalTranscriptWords: number;
+  readyVideos: number;
+  ambientVideos: number;
+  missingVideos: number;
+  transcriptCoveragePercent: number;
+  approximateTranscriptHours: number;
+  averageWordsPerTranscribedVideo: number;
+  medianWordsPerTranscribedVideo: number;
+  p90WordsPerTranscribedVideo: number;
   uniqueWords: number;
   uniqueBigrams: number;
   uniqueTrigrams: number;
   uniqueTrackedQueries: number;
   totalTrackedQueries: number;
+  measuredTrackedQueries: number;
+  zeroResultQueries: number;
+  searchSuccessRate: number;
+  averageSearchResultCount: number;
+  averageSearchDurationMs: number;
   refreshedAt: string;
 };
 
 type AnalyticsResponse = {
   summary: AnalyticsSummary;
   queries: AnalyticsMetricEntry[];
+  failedQueries: AnalyticsMetricEntry[];
   words: AnalyticsMetricEntry[];
   bigrams: AnalyticsMetricEntry[];
   trigrams: AnalyticsMetricEntry[];
+  distinctiveBigrams: AnalyticsMetricEntry[];
+  distinctiveTrigrams: AnalyticsMetricEntry[];
+  topTranscriptVideos: AnalyticsVideoEntry[];
+  yearlyActivity: AnalyticsYearEntry[];
 };
 
 export const metadata: Metadata = {
@@ -34,6 +66,12 @@ export const dynamic = "force-dynamic";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("fi-FI").format(value);
+}
+
+function formatDecimal(value: number, maximumFractionDigits = 1): string {
+  return new Intl.NumberFormat("fi-FI", {
+    maximumFractionDigits,
+  }).format(value);
 }
 
 function formatUpdatedAt(value: string): string {
@@ -66,7 +104,7 @@ async function loadAnalytics(): Promise<AnalyticsResponse> {
 }
 
 function BarList({ items, emptyText }: { items: AnalyticsMetricEntry[]; emptyText: string }) {
-  const maxCount = items[0]?.count ?? 0;
+  const maxCount = Math.max(0, ...items.map((item) => item.count));
 
   if (items.length === 0) {
     return <p className="analytics-empty">{emptyText}</p>;
@@ -78,7 +116,7 @@ function BarList({ items, emptyText }: { items: AnalyticsMetricEntry[]; emptyTex
         const width = maxCount > 0 ? `${Math.max(8, (item.count / maxCount) * 100)}%` : "8%";
 
         return (
-          <div className="analytics-bar-row" role="listitem" key={item.label}>
+          <div className="analytics-bar-row" role="listitem" key={item.key ?? item.label}>
             <div className="analytics-bar-row__meta">
               <span className="analytics-bar-row__label">{item.label}</span>
               <span className="analytics-bar-row__count">{formatNumber(item.count)}</span>
@@ -89,6 +127,25 @@ function BarList({ items, emptyText }: { items: AnalyticsMetricEntry[]; emptyTex
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function YearlyActivityList({ items }: { items: AnalyticsYearEntry[] }) {
+  if (items.length === 0) {
+    return <p className="analytics-empty">Yearly activity is not available yet.</p>;
+  }
+
+  return (
+    <div className="analytics-year-list" role="list">
+      {items.map((item) => (
+        <div className="analytics-year-row" role="listitem" key={item.year}>
+          <strong>{item.year}</strong>
+          <span>{formatNumber(item.videoCount)} videos</span>
+          <span>{formatNumber(item.wordCount)} words</span>
+          <span>{formatDecimal(item.transcriptHours)} h</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -104,6 +161,17 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 export default async function AnalyticsPage() {
   const analytics = await loadAnalytics();
+  const hasMeasuredSearches = analytics.summary.measuredTrackedQueries > 0;
+  const coverageEntries = [
+    { label: "Ready", count: analytics.summary.readyVideos },
+    { label: "Ambient / no speech", count: analytics.summary.ambientVideos },
+    { label: "Missing", count: analytics.summary.missingVideos },
+  ];
+  const transcriptVideoEntries = analytics.topTranscriptVideos.map((video) => ({
+    key: video.videoId,
+    label: video.title,
+    count: video.wordCount,
+  }));
 
   return (
     <main className="page-shell analytics-page-shell">
@@ -111,7 +179,7 @@ export default async function AnalyticsPage() {
         <div className="analytics-hero__copy">
           <p className="stage-bar__eyebrow analytics-hero__eyebrow">Archive intelligence</p>
           <h1>Analytics</h1>
-          <p className="analytics-hero__text">A lightweight reporting view over tracked user searches and the normalized transcript corpus.</p>
+          <p className="analytics-hero__text">A lightweight view of search quality, transcript coverage, archive activity, and recurring language.</p>
         </div>
         <div className="analytics-hero__actions">
           <a className="stage-link stage-link--share" href="/">
@@ -123,25 +191,77 @@ export default async function AnalyticsPage() {
 
       <section className="analytics-metrics-grid">
         <MetricCard label="Videos" value={formatNumber(analytics.summary.totalVideos)} />
-        <MetricCard label="Transcript chunks" value={formatNumber(analytics.summary.totalTranscriptChunks)} />
+        <MetricCard label="Transcript coverage" value={`${formatDecimal(analytics.summary.transcriptCoveragePercent)}%`} />
+        <MetricCard label="Approx. transcript hours" value={formatDecimal(analytics.summary.approximateTranscriptHours)} />
         <MetricCard label="Transcript words" value={formatNumber(analytics.summary.totalTranscriptWords)} />
-        <MetricCard label="Unique tracked queries" value={formatNumber(analytics.summary.uniqueTrackedQueries)} />
+        <MetricCard label="Avg. words / transcribed video" value={formatNumber(Math.round(analytics.summary.averageWordsPerTranscribedVideo))} />
+        <MetricCard label="Median words / transcribed video" value={formatNumber(Math.round(analytics.summary.medianWordsPerTranscribedVideo))} />
+        <MetricCard label="P90 words / transcribed video" value={formatNumber(Math.round(analytics.summary.p90WordsPerTranscribedVideo))} />
+        <MetricCard label="Transcript chunks" value={formatNumber(analytics.summary.totalTranscriptChunks)} />
         <MetricCard label="Tracked searches" value={formatNumber(analytics.summary.totalTrackedQueries)} />
+        <MetricCard label="Unique tracked queries" value={formatNumber(analytics.summary.uniqueTrackedQueries)} />
+        <MetricCard label="Measured search success" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.searchSuccessRate)}%` : "—"} />
+        <MetricCard label="Zero-result searches" value={formatNumber(analytics.summary.zeroResultQueries)} />
+        <MetricCard label="Avg. results / search" value={hasMeasuredSearches ? formatDecimal(analytics.summary.averageSearchResultCount) : "—"} />
+        <MetricCard label="Avg. backend search time" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.averageSearchDurationMs)} ms` : "—"} />
         <MetricCard label="Unique words" value={formatNumber(analytics.summary.uniqueWords)} />
-        <MetricCard label="Unique bigrams" value={formatNumber(analytics.summary.uniqueBigrams)} />
-        <MetricCard label="Unique trigrams" value={formatNumber(analytics.summary.uniqueTrigrams)} />
+        <MetricCard label="Unique phrases" value={formatNumber(analytics.summary.uniqueBigrams + analytics.summary.uniqueTrigrams)} />
       </section>
 
       <section className="analytics-grid">
         <article className="status-banner analytics-card analytics-card--wide">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">User behavior</p>
+              <p className="analytics-card__eyebrow">Search quality</p>
               <h2>Most common queries</h2>
             </div>
-            <p className="analytics-card__hint">Normalized queries, aggregated by count</p>
+            <p className="analytics-card__hint">Normalized queries, aggregated without storing user identities</p>
           </div>
           <BarList items={analytics.queries} emptyText="No tracked searches yet." />
+        </article>
+
+        <article className="status-banner analytics-card">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Search quality</p>
+              <h2>Queries without results</h2>
+            </div>
+            <p className="analytics-card__hint">Useful gaps in the searchable archive</p>
+          </div>
+          <BarList items={analytics.failedQueries} emptyText="No zero-result searches have been measured yet." />
+        </article>
+
+        <article className="status-banner analytics-card">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Corpus health</p>
+              <h2>Transcript coverage</h2>
+            </div>
+            <p className="analytics-card__hint">Ready, ambient, and missing transcript states</p>
+          </div>
+          <BarList items={coverageEntries} emptyText="Transcript status data is not available yet." />
+        </article>
+
+        <article className="status-banner analytics-card analytics-card--wide">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Corpus health</p>
+              <h2>Largest transcripts</h2>
+            </div>
+            <p className="analytics-card__hint">Videos ranked by transcript word count</p>
+          </div>
+          <BarList items={transcriptVideoEntries} emptyText="Transcript size data is not available yet." />
+        </article>
+
+        <article className="status-banner analytics-card analytics-card--wide">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Archive timeline</p>
+              <h2>Publication activity by year</h2>
+            </div>
+            <p className="analytics-card__hint">Published videos, transcript words, and approximate transcript hours</p>
+          </div>
+          <YearlyActivityList items={analytics.yearlyActivity} />
         </article>
 
         <article className="status-banner analytics-card">
@@ -166,7 +286,7 @@ export default async function AnalyticsPage() {
           <BarList items={analytics.bigrams} emptyText="Bigram analytics are not available yet." />
         </article>
 
-        <article className="status-banner analytics-card analytics-card--wide">
+        <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
               <p className="analytics-card__eyebrow">Sequences</p>
@@ -175,6 +295,28 @@ export default async function AnalyticsPage() {
             <p className="analytics-card__hint">Three-token phrases by occurrence count</p>
           </div>
           <BarList items={analytics.trigrams} emptyText="Trigram analytics are not available yet." />
+        </article>
+
+        <article className="status-banner analytics-card">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Distinctive language</p>
+              <h2>Distinctive bigrams</h2>
+            </div>
+            <p className="analytics-card__hint">Repeated pairs ranked by association; bars show occurrences</p>
+          </div>
+          <BarList items={analytics.distinctiveBigrams} emptyText="No repeated distinctive bigrams are available yet." />
+        </article>
+
+        <article className="status-banner analytics-card analytics-card--wide">
+          <div className="analytics-card__header">
+            <div>
+              <p className="analytics-card__eyebrow">Distinctive language</p>
+              <h2>Distinctive trigrams</h2>
+            </div>
+            <p className="analytics-card__hint">Repeated three-word phrases ranked by association; bars show occurrences</p>
+          </div>
+          <BarList items={analytics.distinctiveTrigrams} emptyText="No repeated distinctive trigrams are available yet." />
         </article>
       </section>
     </main>
