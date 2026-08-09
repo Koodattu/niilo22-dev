@@ -53,7 +53,7 @@ For the root data pipeline:
 
 For the web application:
 
-- Node.js and npm for local frontend/backend development
+- Node.js 24 LTS and npm for local frontend/backend development
 - Docker Compose for the PostgreSQL development database or full production-style stack
 - Existing `videos.json` and `output/*.json` data when importing transcripts
 
@@ -81,7 +81,7 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-The transcription dependency set is GPU-oriented. The default `transcribe.py` configuration uses `device="cuda"` and `compute_type="float16"`.
+The transcription dependency set is GPU-oriented. PyTorch packages use the CUDA 12.4 wheel index and are pinned to a mutually compatible release set. The default `transcribe.py` configuration uses `device="cuda"` and `compute_type="float16"`.
 
 ## Download Videos
 

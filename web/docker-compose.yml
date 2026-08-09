@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17.10-alpine3.23
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-niilo22}
@@ -23,8 +23,8 @@ services:
 
   backend:
     build:
-      context: ..
-      dockerfile: web/backend/Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     environment:
       HOST: 0.0.0.0
@@ -45,8 +45,8 @@ services:
 
   importer:
     build:
-      context: ..
-      dockerfile: web/backend/Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     restart: "no"
     profiles:
       - import
@@ -65,8 +65,8 @@ services:
 
   frontend:
     build:
-      context: ..
-      dockerfile: web/frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       BACKEND_URL: ${BACKEND_URL:-http://backend:4000}

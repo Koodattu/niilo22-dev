@@ -1,5 +1,6 @@
 .git
 .gitignore
+.agents
 .vs
 venv
 __pycache__
@@ -7,7 +8,15 @@ output
 videos
 *.mp3
 *.jsonl
-web/frontend/.next
-web/frontend/node_modules
-web/backend/node_modules
-web/backend/dist
+*.zip
+deno.exe
+yt-dlp.exe
+niilo22_dev.PNG
+videos.json
+transcription_*.json
+.env
+web/**/.env*
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo

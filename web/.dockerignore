@@ -1,0 +1,8 @@
+.env*
+README.md
+docker-compose*.yml
+frontend
+backend/.env*
+backend/node_modules
+backend/dist
+**/*.tsbuildinfo

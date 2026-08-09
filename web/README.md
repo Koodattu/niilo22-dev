@@ -26,9 +26,9 @@ PostgreSQL binds to `127.0.0.1` by default in Docker-based workflows.
 
 ```powershell
 cd frontend
-npm install
+npm ci
 cd ..\backend
-npm install
+npm ci
 ```
 
 3. Copy env files if needed:

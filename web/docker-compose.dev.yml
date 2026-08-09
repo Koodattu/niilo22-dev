@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17.10-alpine3.23
     container_name: niilo22-db-dev
     restart: unless-stopped
     environment:
