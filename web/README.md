@@ -99,7 +99,7 @@ To run the import manually:
 docker compose --profile import up importer
 ```
 
-The importer stores a source signature in PostgreSQL and skips the expensive full import when the current `videos.json` plus transcript file metadata match the last successful import. It also refreshes the stored analytics snapshot after changed data is imported, or repairs a missing snapshot without repeating an unchanged import.
+The importer stores a content signature for each video in PostgreSQL. Re-running it reads the source files but only writes new or changed videos, replaces chunks only for those videos, and removes database rows for videos no longer present in `videos.json`. It also refreshes the stored analytics snapshot after changed data is imported, or repairs a missing snapshot without rewriting unchanged videos.
 
 Search analytics keep per-query aggregate counts, result totals, and backend duration totals. They do not store user identities or a separate event row for every search.
 
@@ -149,4 +149,4 @@ docker compose down -v
 ## Notes
 
 - Some transcript files are legitimately empty for ambient-only videos.
-- Re-running the importer is safe: it upserts videos and replaces chunks per video.
+- Re-running the importer is safe: unchanged videos are skipped, while new or changed videos are upserted and have their chunks replaced.

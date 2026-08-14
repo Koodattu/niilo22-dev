@@ -316,7 +316,15 @@ Follow importer logs:
 docker compose logs -f importer
 ```
 
-The importer stores a source signature and skips the expensive full import when the current `videos.json` plus transcript file metadata match the last successful import.
+The importer stores a content signature per video. Re-running it reads the source files but only writes new or changed videos, replaces chunks only for those videos, and removes database rows for videos no longer present in `videos.json`.
+
+To publish the current `videos.json` and `output/` as an immutable dataset snapshot in this repository's GitHub Releases, authenticate GitHub CLI and run:
+
+```powershell
+.\scripts\publish-dataset.ps1
+```
+
+The script creates a timestamped `dataset-*` release containing `niilo22-dataset.tar.gz` and its SHA-256 checksum. Dataset files remain ignored by Git.
 
 Connect to PostgreSQL from the host or another tool:
 
@@ -375,4 +383,4 @@ Some transcript files may be empty when a source video has no useful speech.
 - Do not commit `.env` files, API keys, cookies, credentials, or private deployment settings.
 - Use local or least-privilege YouTube API credentials.
 - Review `web/.env` before deployment; the included database credentials are development defaults.
-- Re-running the web importer is safe: it upserts videos and replaces transcript chunks per video.
+- Re-running the web importer is safe: unchanged videos are skipped, while new or changed videos are upserted and have their transcript chunks replaced.

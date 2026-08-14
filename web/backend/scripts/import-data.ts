@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { sep } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -24,11 +24,6 @@ interface VideosFile {
   videos: VideoItem[];
 }
 
-interface VideosFilePayload {
-  raw: string;
-  parsed: VideosFile;
-}
-
 interface TranscriptFile {
   file_name?: string;
   youtube_id?: string;
@@ -38,17 +33,15 @@ interface TranscriptFile {
 interface TranscriptLocation {
   filePath: Buffer;
   displayName: string;
-  size: number;
-  modifiedAtMs: number;
 }
 
-interface ImportStateRow {
-  source_signature: string;
-  video_count: number | string;
-  transcript_file_count: number | string;
+interface ImportedVideoRow {
+  youtube_id: string;
+  source_signature: string | null;
 }
 
 const IMPORT_JOB_NAME = "full-import";
+const VIDEO_SOURCE_SIGNATURE_VERSION = "1";
 
 function extractYoutubeId(filename: Buffer | string): string | null {
   const filenameBuffer = typeof filename === "string" ? Buffer.from(filename) : filename;
@@ -85,25 +78,9 @@ function extractYoutubeId(filename: Buffer | string): string | null {
   return parts[2]?.toString("utf8") ?? null;
 }
 
-function toNumber(value: number | string | null | undefined): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  return 0;
-}
-
-async function readVideosFile(): Promise<VideosFilePayload> {
+async function readVideosFile(): Promise<VideosFile> {
   const raw = await readFile(config.videosJsonPath, "utf8");
-  return {
-    raw,
-    parsed: JSON.parse(raw) as VideosFile,
-  };
+  return JSON.parse(raw) as VideosFile;
 }
 
 async function buildTranscriptIndex(): Promise<Map<string, TranscriptLocation>> {
@@ -119,13 +96,10 @@ async function buildTranscriptIndex(): Promise<Map<string, TranscriptLocation>> 
     const youtubeId = extractYoutubeId(entry.name);
     if (youtubeId) {
       const filePath = Buffer.concat([outputDirPrefix, entry.name]);
-      const fileStats = await stat(filePath);
 
       transcriptIndex.set(youtubeId, {
         filePath,
         displayName: entry.name.toString("utf8"),
-        size: fileStats.size,
-        modifiedAtMs: fileStats.mtimeMs,
       });
     }
   }
@@ -133,41 +107,28 @@ async function buildTranscriptIndex(): Promise<Map<string, TranscriptLocation>> 
   return transcriptIndex;
 }
 
-function buildImportSourceSignature(videosFileRaw: string, transcriptIndex: Map<string, TranscriptLocation>): string {
+function buildVideoSourceSignature(video: VideoItem, transcriptLocation: TranscriptLocation | undefined, transcriptRaw: string | null): string {
   const hash = createHash("sha256");
-  hash.update(videosFileRaw);
-
-  for (const [youtubeId, transcriptLocation] of [...transcriptIndex.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-    hash.update("\n");
-    hash.update(youtubeId);
-    hash.update("|");
-    hash.update(transcriptLocation.displayName);
-    hash.update("|");
-    hash.update(String(transcriptLocation.size));
-    hash.update("|");
-    hash.update(String(Math.round(transcriptLocation.modifiedAtMs)));
-  }
+  hash.update(VIDEO_SOURCE_SIGNATURE_VERSION);
+  hash.update("\n");
+  hash.update(
+    JSON.stringify({
+      id: video.id,
+      name: video.name,
+      publishedAt: video.publishedAt,
+      downloaded: video.downloaded ?? false,
+      transcriptFileName: transcriptLocation?.displayName ?? null,
+    }),
+  );
+  hash.update("\n");
+  hash.update(transcriptRaw ?? "missing");
 
   return hash.digest("hex");
 }
 
-async function readImportState(): Promise<ImportStateRow | null> {
-  const { rows } = await pool.query<ImportStateRow>(
-    `
-      SELECT source_signature, video_count, transcript_file_count
-      FROM import_state
-      WHERE job_name = $1
-      LIMIT 1
-    `,
-    [IMPORT_JOB_NAME],
-  );
-
-  return rows[0] ?? null;
-}
-
-async function countImportedVideos(): Promise<number> {
-  const { rows } = await pool.query<{ video_count: number | string }>(`SELECT COUNT(*) AS video_count FROM videos`);
-  return toNumber(rows[0]?.video_count);
+async function readImportedVideoSignatures(): Promise<Map<string, string | null>> {
+  const { rows } = await pool.query<ImportedVideoRow>(`SELECT youtube_id, source_signature FROM videos`);
+  return new Map(rows.map((row) => [row.youtube_id, row.source_signature]));
 }
 
 async function writeImportState(sourceSignature: string, videoCount: number, transcriptFileCount: number): Promise<void> {
@@ -191,12 +152,14 @@ async function writeImportState(sourceSignature: string, videoCount: number, tra
   );
 }
 
-async function readTranscript(path: Buffer): Promise<TranscriptFile> {
-  const raw = await readFile(path, "utf8");
-  return JSON.parse(raw) as TranscriptFile;
-}
-
-async function upsertVideo(client: PoolClient, video: VideoItem, transcriptWordCount: number, transcriptStatus: string, localFileName: string | null): Promise<void> {
+async function upsertVideo(
+  client: PoolClient,
+  video: VideoItem,
+  transcriptWordCount: number,
+  transcriptStatus: string,
+  localFileName: string | null,
+  sourceSignature: string,
+): Promise<void> {
   await client.query(
     `
       INSERT INTO videos (
@@ -207,8 +170,9 @@ async function upsertVideo(client: PoolClient, video: VideoItem, transcriptWordC
         downloaded,
         local_file_name,
         transcript_word_count,
-        transcript_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        transcript_status,
+        source_signature
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (youtube_id)
       DO UPDATE SET
         title = EXCLUDED.title,
@@ -218,9 +182,10 @@ async function upsertVideo(client: PoolClient, video: VideoItem, transcriptWordC
         local_file_name = EXCLUDED.local_file_name,
         transcript_word_count = EXCLUDED.transcript_word_count,
         transcript_status = EXCLUDED.transcript_status,
+        source_signature = EXCLUDED.source_signature,
         updated_at = NOW()
     `,
-    [video.id, video.name, normalizeSearchText(video.name), video.publishedAt, video.downloaded ?? false, localFileName, transcriptWordCount, transcriptStatus],
+    [video.id, video.name, normalizeSearchText(video.name), video.publishedAt, video.downloaded ?? false, localFileName, transcriptWordCount, transcriptStatus, sourceSignature],
   );
 }
 
@@ -257,57 +222,76 @@ async function replaceChunks(client: PoolClient, videoId: string, chunks: Return
 
 async function importAllVideos(): Promise<void> {
   await ensureSchema();
-  const videosFilePayload = await readVideosFile();
-  const videosFile = videosFilePayload.parsed;
+  const videosFile = await readVideosFile();
   const transcriptIndex = await buildTranscriptIndex();
-  const sourceSignature = buildImportSourceSignature(videosFilePayload.raw, transcriptIndex);
-  const existingImportState = await readImportState();
-  const existingVideoCount = await countImportedVideos();
+  const importedVideoSignatures = await readImportedVideoSignatures();
+  const currentVideoIds = new Set(videosFile.videos.map((video) => video.id));
+  const datasetHash = createHash("sha256");
 
-  if (
-    existingImportState?.source_signature === sourceSignature &&
-    existingVideoCount === videosFile.videos.length &&
-    toNumber(existingImportState.video_count) === videosFile.videos.length &&
-    toNumber(existingImportState.transcript_file_count) === transcriptIndex.size
-  ) {
-    console.log(`Skipping import: ${existingVideoCount} videos already imported for source signature ${sourceSignature}`);
-    console.log("Checking analytics snapshot");
-    const analyticsRefreshed = await refreshAnalyticsSnapshot(sourceSignature);
-    console.log(analyticsRefreshed ? "Analytics snapshot refreshed" : "Analytics snapshot is already current");
-    return;
-  }
-
-  console.log(`Preparing import for ${videosFile.videos.length} videos`);
+  console.log(`Checking ${videosFile.videos.length} videos for changes`);
 
   let processed = 0;
+  let skipped = 0;
   let totalChunks = 0;
+  let checked = 0;
 
   for (const video of videosFile.videos) {
     const transcriptLocation = transcriptIndex.get(video.id);
-    const transcript = transcriptLocation ? await readTranscript(transcriptLocation.filePath) : null;
+    const transcriptRaw = transcriptLocation ? await readFile(transcriptLocation.filePath, "utf8") : null;
+    const sourceSignature = buildVideoSourceSignature(video, transcriptLocation, transcriptRaw);
+
+    datasetHash.update(video.id);
+    datasetHash.update("\0");
+    datasetHash.update(sourceSignature);
+    datasetHash.update("\n");
+    checked += 1;
+
+    if (importedVideoSignatures.get(video.id) === sourceSignature) {
+      skipped += 1;
+
+      if (checked % 500 === 0 || checked === videosFile.videos.length) {
+        console.log(`Checked ${checked}/${videosFile.videos.length} videos: ${processed} changed, ${skipped} unchanged`);
+      }
+
+      continue;
+    }
+
+    const transcript = transcriptRaw === null ? null : (JSON.parse(transcriptRaw) as TranscriptFile);
     const words = transcript?.words ?? [];
     const chunks = createTranscriptChunks(words);
     const transcriptStatus = transcriptLocation ? (words.length > 0 ? "ready" : "ambient") : "missing";
     const localFileName = transcript?.file_name ?? transcriptLocation?.displayName ?? null;
 
     await withTransaction(async (client) => {
-      await upsertVideo(client, video, words.length, transcriptStatus, localFileName);
+      await upsertVideo(client, video, words.length, transcriptStatus, localFileName, sourceSignature);
       await replaceChunks(client, video.id, chunks);
     });
 
     processed += 1;
     totalChunks += chunks.length;
 
-    if (processed % 100 === 0 || processed === videosFile.videos.length) {
-      console.log(`Imported ${processed}/${videosFile.videos.length} videos, ${totalChunks} chunks so far`);
+    if (checked % 500 === 0 || checked === videosFile.videos.length) {
+      console.log(`Checked ${checked}/${videosFile.videos.length} videos: ${processed} changed, ${skipped} unchanged`);
     }
   }
 
+  const removedVideoIds = [...importedVideoSignatures.keys()].filter((videoId) => !currentVideoIds.has(videoId));
+
+  if (removedVideoIds.length > 0) {
+    await pool.query("DELETE FROM videos WHERE youtube_id = ANY($1::text[])", [removedVideoIds]);
+  }
+
+  const sourceSignature = datasetHash.digest("hex");
   await writeImportState(sourceSignature, videosFile.videos.length, transcriptIndex.size);
-  await writeSearchDataVersion();
+
+  if (processed > 0 || removedVideoIds.length > 0) {
+    await writeSearchDataVersion();
+  }
+
   console.log("Refreshing analytics snapshot");
-  await refreshAnalyticsSnapshot(sourceSignature);
-  console.log(`Import complete: ${processed} videos, ${totalChunks} transcript chunks`);
+  const analyticsRefreshed = await refreshAnalyticsSnapshot(sourceSignature);
+  console.log(analyticsRefreshed ? "Analytics snapshot refreshed" : "Analytics snapshot is already current");
+  console.log(`Import complete: ${processed} changed, ${skipped} unchanged, ${removedVideoIds.length} removed, ${totalChunks} transcript chunks written`);
 }
 
 try {
