@@ -36,6 +36,8 @@ npm ci
 - `frontend/.env.example` -> `frontend/.env.local`
 - `backend/.env.example` -> `backend/.env`
 
+Backend `dev` and `import:data` load `.env` when present (Node 24); explicit environment values take precedence. Check the database target before importing: the importer removes records absent from its input `videos.json`.
+
 4. Import transcripts into PostgreSQL:
 
 ```powershell
@@ -143,8 +145,20 @@ docker compose down -v
 
 - Videos are stored in `videos`
 - Transcript chunks are stored in `transcript_chunks`
-- Search combines PostgreSQL full-text search and trigram similarity
+- Search uses Finnish full-text search, preferring phrase matches for multi-word queries
 - Results are grouped by video and returned with timestamped snippets
+
+## Shared links and cache compatibility
+
+New shared links include `t` (seconds), so the selected moment survives replacement of transcript chunk IDs. Existing `snippet` links still resolve when their chunk exists; deleted chunk IDs alone cannot recover the old timestamp. Queries require 2–200 characters including at least two letters or digits.
+
+Migration `007_search_data_revision.sql` adds one revision row. Each changed-video or deletion transaction advances it, and API processes check it before using their bounded in-memory search cache. Changes committed before a later import failure become visible without sharing a filesystem. An invalid video's previous data stays intact.
+
+Normal startup applies pending migrations. No existing rows are rewritten. Leave the additive table in place if rolling application code back; old processes still use their previous cache mechanism. `SEARCH_DATA_VERSION_PATH` is unused by the new code; existing deployment settings were not changed. Coordinate API/importer versions during rollout because an old importer does not update the new revision row.
+
+## Regression checks
+
+Follow [the verification workflow](../work/goal-improvement/VERIFICATION.md) for isolated PostgreSQL setup, synthetic fixtures, builds, browser tests, benchmarks and cleanup. Tests and seeding must use a dedicated disposable database. The [work log](../work/goal-improvement/STATE.md) and [coverage review](../work/goal-improvement/REVIEW.md) record verified scenarios and deferred findings.
 
 ## Notes
 

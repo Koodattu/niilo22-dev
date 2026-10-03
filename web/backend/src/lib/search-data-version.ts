@@ -1,30 +1,12 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-
-import { config } from "../config.js";
-
-function isFileNotFound(error: unknown): error is NodeJS.ErrnoException {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
+import type { PoolClient } from "pg";
+import { query } from "../db.js";
 
 export async function readSearchDataVersion(): Promise<string> {
-  try {
-    const details = await stat(config.searchDataVersionPath);
-    return `${details.mtimeMs}`;
-  } catch (error) {
-    if (isFileNotFound(error)) {
-      return "missing";
-    }
-
-    throw error;
-  }
+  const { rows } = await query<{ revision: string }>("SELECT revision FROM search_data_revision WHERE singleton = TRUE");
+  if (!rows[0]) throw new Error("Search data revision is missing; apply database migrations.");
+  return rows[0].revision;
 }
 
-export async function writeSearchDataVersion(): Promise<string> {
-  const version = `${Date.now()}`;
-
-  await mkdir(dirname(config.searchDataVersionPath), { recursive: true });
-  await writeFile(config.searchDataVersionPath, `${version}\n`, "utf8");
-
-  return version;
+export async function writeSearchDataVersion(client: PoolClient): Promise<void> {
+  await client.query("UPDATE search_data_revision SET revision = revision + 1 WHERE singleton = TRUE");
 }

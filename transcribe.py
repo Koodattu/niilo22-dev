@@ -1,6 +1,6 @@
 import os
-import json
 import time
+from pipeline_files import parse_video_filename, write_json_atomic
 from tqdm import tqdm
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
@@ -39,6 +39,9 @@ def transcribe_file(
 
     # Perform transcription
     try:
+        youtube_id, _ = parse_video_filename(mp3_filename)
+        if not youtube_id:
+            raise ValueError("Invalid media filename; expected timestamp_date_videoid_title.mp3")
         segments, info = batched_model.transcribe(
             file_path,
             language="fi",          # Force Finnish
@@ -51,7 +54,7 @@ def transcribe_file(
         # Prepare JSON data
         transcription_data = {
             "file_name": mp3_filename,
-            "youtube_id": mp3_filename.split("_")[2],  # Extract video ID
+            "youtube_id": youtube_id,
             "words": []
         }
 
@@ -67,8 +70,7 @@ def transcribe_file(
         # Save transcription JSON
         json_name = os.path.splitext(mp3_filename)[0] + ".json"
         json_path = os.path.join(output_folder, json_name)
-        with open(json_path, "w", encoding="utf-8") as out_f:
-            json.dump(transcription_data, out_f, ensure_ascii=False, indent=2)
+        write_json_atomic(json_path, transcription_data)
 
         # Update progress/tracker
         save_progress(progress_file, mp3_filename)

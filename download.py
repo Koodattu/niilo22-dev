@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from pipeline_files import write_json_atomic
 
 ###############################################################################
 #                            Environment & Globals
@@ -68,8 +69,7 @@ def read_videos_json() -> dict:
         with open(VIDEOS_JSON, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
-        print(f"Error reading {VIDEOS_JSON}; starting fresh.")
-        return {"lastUpdated": None, "videos": []}
+        raise ValueError(f"Cannot read {VIDEOS_JSON}. Repair or restore the metadata file before downloading; existing data was not changed.") from None
 
 
 def write_videos_json(data: dict):
@@ -77,8 +77,7 @@ def write_videos_json(data: dict):
     Write updated data to videos.json (pretty-printed JSON).
     """
     data["lastUpdated"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    with open(VIDEOS_JSON, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    write_json_atomic(VIDEOS_JSON, data, indent=4)
 
 
 def video_already_in_db(videos_data: dict, video_id: str) -> bool:

@@ -38,7 +38,7 @@ export const metadata: Metadata = {
         url: DEFAULT_OG_IMAGE_PATH,
         width: OG_IMAGE_SIZE.width,
         height: OG_IMAGE_SIZE.height,
-        alt: "Niilo22 Search preview image",
+        alt: "Niilo22 Searchin esikatselukuva",
       },
     ],
   },

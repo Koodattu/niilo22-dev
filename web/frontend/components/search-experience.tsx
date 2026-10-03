@@ -1,14 +1,17 @@
 "use client";
 
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import type { SearchResponse, SearchSnippet, SearchVideoResult } from "./search-types";
+import { VideoPlayer } from "./video-player";
 
 const MATCH_LEAD_SECONDS = 3;
 const MATCH_TAIL_SECONDS = 6;
 const MIN_PLAYBACK_WINDOW_SECONDS = 10;
 const SHARE_FEEDBACK_TIMEOUT_MS = 2_000;
+
+type SearchSelection = { query: string; videoId?: string | null; snippetId?: string | null; timestamp?: string | null };
 
 type ShareFeedbackState = "idle" | "copied" | "error";
 
@@ -32,23 +35,19 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-function parseSnippetId(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsedValue = Number.parseInt(value, 10);
-  return Number.isNaN(parsedValue) ? null : parsedValue;
+function parseSnippetId(value: string | null): string | null {
+  return value && /^[1-9]\d{0,18}$/.test(value) ? value : null;
 }
 
-function buildSharedClipHref(pathname: string, videoId: string, snippetId: number | null): string {
+function buildSharedClipHref(pathname: string, videoId: string, snippet: SearchSnippet | null): string {
   const params = new URLSearchParams();
 
   params.set("autoplay", "1");
   params.set("result", videoId);
 
-  if (snippetId !== null) {
-    params.set("snippet", String(snippetId));
+  if (snippet) {
+    params.set("snippet", snippet.chunkId);
+    params.set("t", String(snippet.startMs / 1_000));
   }
 
   return `${pathname}?${params.toString()}`;
@@ -82,27 +81,24 @@ async function copyTextToClipboard(value: string): Promise<void> {
   }
 }
 
-function withPlaybackWindow(videoId: string, snippet: SearchSnippet, autoplayEnabled: boolean): string {
-  const playbackStartSeconds = Math.max(0, snippet.startSeconds - MATCH_LEAD_SECONDS);
-  const playbackEndSeconds = Math.max(playbackStartSeconds + MIN_PLAYBACK_WINDOW_SECONDS, snippet.endSeconds + MATCH_TAIL_SECONDS);
+function withPlaybackWindow(videoId: string, snippet: SearchSnippet): string {
+  const { startSeconds, endSeconds } = getPlaybackWindow(snippet);
   const url = new URL(`https://www.youtube.com/embed/${videoId}`);
 
-  url.searchParams.set("start", String(playbackStartSeconds));
-  url.searchParams.set("end", String(playbackEndSeconds));
-  url.searchParams.set("autoplay", autoplayEnabled ? "1" : "0");
+  url.searchParams.set("start", String(startSeconds));
+  url.searchParams.set("end", String(endSeconds));
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("rel", "0");
   return url.toString();
 }
 
-function getPlaybackWindow(snippet: SearchSnippet): { startSeconds: number; endSeconds: number; durationMs: number } {
+function getPlaybackWindow(snippet: SearchSnippet): { startSeconds: number; endSeconds: number } {
   const startSeconds = Math.max(0, snippet.startSeconds - MATCH_LEAD_SECONDS);
   const endSeconds = Math.max(startSeconds + MIN_PLAYBACK_WINDOW_SECONDS, snippet.endSeconds + MATCH_TAIL_SECONDS);
 
   return {
     startSeconds,
     endSeconds,
-    durationMs: (endSeconds - startSeconds) * 1_000,
   };
 }
 
@@ -110,13 +106,11 @@ export function SearchExperience() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentQuery = searchParams.get("q") ?? "";
-  const initialQuery = currentQuery;
   const initialAutoplayEnabled = searchParams.get("autoplay") !== "0";
   const selectedResultId = searchParams.get("result");
-  const selectedSnippetId = parseSnippetId(searchParams.get("snippet"));
   const isSharedView = !currentQuery.trim() && Boolean(selectedResultId);
 
-  const [query, setQuery] = useState(initialQuery);
+  const [query, setQuery] = useState(currentQuery);
   const [results, setResults] = useState<SearchVideoResult[]>([]);
   const [resultCount, setResultCount] = useState(0);
   const [tookMs, setTookMs] = useState(0);
@@ -124,23 +118,25 @@ export function SearchExperience() {
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
-  const [activeSnippetId, setActiveSnippetId] = useState<number | null>(null);
+  const [activeSnippetId, setActiveSnippetId] = useState<string | null>(null);
   const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
-  const [manualAutoplaySelection, setManualAutoplaySelection] = useState<{ videoId: string; snippetId: number | null } | null>(null);
+  const [manualAutoplaySelection, setManualAutoplaySelection] = useState<{ videoId: string; snippetId: string | null } | null>(null);
   const [shareFeedback, setShareFeedback] = useState<ShareFeedbackState>("idle");
+  const [playerUnavailable, setPlayerUnavailable] = useState(false);
   const resultCardRefs = useRef(new Map<string, HTMLElement>());
+  const requestRef = useRef<AbortController | null>(null);
+  const lastRequestRef = useRef<SearchSelection | null>(null);
   const shareFeedbackTimeoutRef = useRef<number | null>(null);
 
-  const deferredResults = useDeferredValue(results);
   const activeResult = results.find((result) => result.videoId === activeVideoId) ?? results[0] ?? null;
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
   const shouldAutoplayActiveSelection =
     autoplayEnabled ||
     (manualAutoplaySelection !== null && manualAutoplaySelection.videoId === activeResult?.videoId && manualAutoplaySelection.snippetId === (activeSnippet?.chunkId ?? null));
   const playbackWindow = useMemo(() => (activeSnippet ? getPlaybackWindow(activeSnippet) : null), [activeSnippet]);
-  const sharedClipHref = activeResult ? buildSharedClipHref(pathname, activeResult.videoId, activeSnippet?.chunkId ?? null) : null;
+  const sharedClipHref = activeResult ? buildSharedClipHref(pathname, activeResult.videoId, activeSnippet) : null;
 
-  function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean, nextResultId?: string | null, nextSnippetId?: number | null): void {
+  function replaceSearchParams(nextQuery?: string, nextAutoplayEnabled?: boolean, nextResultId?: string | null, nextSnippetId?: string | null, push = false): void {
     if (typeof window === "undefined") {
       return;
     }
@@ -150,6 +146,7 @@ export function SearchExperience() {
 
     if (nextQuery !== undefined) {
       const trimmedQuery = nextQuery.trim();
+      params.delete("t");
 
       if (trimmedQuery) {
         params.set("q", trimmedQuery);
@@ -185,7 +182,8 @@ export function SearchExperience() {
     }
 
     const nextUrl = nextSearch ? `${pathname}?${nextSearch}` : pathname;
-    window.history.replaceState(null, "", nextUrl);
+    if (push) window.history.pushState(null, "", nextUrl);
+    else window.history.replaceState(null, "", nextUrl);
   }
 
   function updateAutoplayEnabled(nextAutoplayEnabled: boolean): void {
@@ -194,20 +192,19 @@ export function SearchExperience() {
   }
 
   useEffect(() => {
-    async function bootstrapFromUrl(): Promise<void> {
-      if (initialQuery.trim()) {
-        await runSearch(initialQuery, false, selectedResultId, selectedSnippetId);
-        return;
-      }
-
-      if (selectedResultId) {
-        await loadSelectedVideo(selectedResultId, selectedSnippetId);
-      }
+    function restoreFromUrl(): void {
+      const params = new URLSearchParams(window.location.search);
+      const restoredQuery = params.get("q") ?? "";
+      setQuery(restoredQuery);
+      setAutoplayEnabled(params.get("autoplay") !== "0");
+      void loadResults({ query: restoredQuery, videoId: params.get("result"), snippetId: parseSnippetId(params.get("snippet")), timestamp: params.get("t") });
     }
-
-    void bootstrapFromUrl();
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    restoreFromUrl();
+    window.addEventListener("popstate", restoreFromUrl);
+    return () => {
+      window.removeEventListener("popstate", restoreFromUrl);
+      requestRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -216,6 +213,7 @@ export function SearchExperience() {
 
   useEffect(() => {
     setShareFeedback("idle");
+    setPlayerUnavailable(false);
   }, [sharedClipHref]);
 
   useEffect(() => {
@@ -227,7 +225,7 @@ export function SearchExperience() {
   }, []);
 
   useEffect(() => {
-    if (!activeResult) {
+    if (!activeResult || window.matchMedia("(max-width: 1180px)").matches) {
       return;
     }
 
@@ -238,7 +236,7 @@ export function SearchExperience() {
 
     const animationFrameId = window.requestAnimationFrame(() => {
       activeCard.scrollIntoView({
-        behavior: autoplayEnabled ? "smooth" : "auto",
+        behavior: autoplayEnabled && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto",
         block: "nearest",
         inline: "nearest",
       });
@@ -249,183 +247,101 @@ export function SearchExperience() {
     };
   }, [activeResult, autoplayEnabled]);
 
-  useEffect(() => {
-    if (!autoplayEnabled || !activeResult || !activeSnippet || deferredResults.length === 0 || !playbackWindow) {
+  function advancePlayback(): void {
+    if (!autoplayEnabled || !activeResult || !activeSnippet || results.length === 0 || !playbackWindow) {
       return;
     }
 
-    const currentVideoIndex = deferredResults.findIndex((result) => result.videoId === activeResult.videoId);
+    const currentVideoIndex = results.findIndex((result) => result.videoId === activeResult.videoId);
     const currentSnippetIndex = activeResult.snippets.findIndex((snippet) => snippet.chunkId === activeSnippet.chunkId);
 
     if (currentVideoIndex === -1 || currentSnippetIndex === -1) {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      const nextSnippet = activeResult.snippets[currentSnippetIndex + 1];
-      if (nextSnippet) {
-        selectVideo(activeResult, nextSnippet, { playImmediately: false });
-        return;
-      }
-
-      const nextResult = deferredResults[currentVideoIndex + 1];
-      if (nextResult) {
-        selectVideo(nextResult, undefined, { playImmediately: false });
-        return;
-      }
-
-      updateAutoplayEnabled(false);
-    }, playbackWindow.durationMs);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [activeResult, activeSnippet, autoplayEnabled, deferredResults, playbackWindow]);
-
-  async function runSearch(nextQuery: string, updateUrl: boolean, preferredResultId?: string | null, preferredSnippetId?: number | null): Promise<void> {
-    if (isLoading) {
+    const nextSnippet = activeResult.snippets[currentSnippetIndex + 1];
+    if (nextSnippet) {
+      selectVideo(activeResult, nextSnippet, { playImmediately: false });
       return;
     }
-
-    const trimmedQuery = nextQuery.trim();
-    if (!trimmedQuery) {
-      setResults([]);
-      setResultCount(0);
-      setTookMs(0);
-      setHasSearched(false);
-      setError(null);
-      setActiveVideoId(null);
-      setActiveSnippetId(null);
-      setAutoplayEnabled(false);
-      setManualAutoplaySelection(null);
-
-      if (updateUrl) {
-        replaceSearchParams("", false, null, null);
-      }
-
+    const nextResult = results[currentVideoIndex + 1];
+    if (nextResult) {
+      selectVideo(nextResult, undefined, { playImmediately: false });
       return;
     }
-
-    if (updateUrl) {
-      replaceSearchParams(trimmedQuery, autoplayEnabled);
-    }
-
-    setIsLoading(true);
-    setError(null);
-    setHasSearched(true);
-    setManualAutoplaySelection(null);
-
-    try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Search request failed with status ${response.status}`);
-      }
-
-      const payload = (await response.json()) as SearchResponse;
-      const nextActiveResult = preferredResultId
-        ? (payload.results.find((result) => result.videoId === preferredResultId) ?? payload.results[0] ?? null)
-        : (payload.results[0] ?? null);
-      const nextActiveSnippet = nextActiveResult
-        ? preferredSnippetId !== null && preferredSnippetId !== undefined
-          ? (nextActiveResult.snippets.find((snippet) => snippet.chunkId === preferredSnippetId) ?? nextActiveResult.snippets[0] ?? null)
-          : (nextActiveResult.snippets[0] ?? null)
-        : null;
-
-      startTransition(() => {
-        setResults(payload.results);
-        setResultCount(payload.resultCount);
-        setTookMs(payload.tookMs);
-        setActiveVideoId(nextActiveResult?.videoId ?? null);
-        setActiveSnippetId(nextActiveSnippet?.chunkId ?? null);
-      });
-
-      replaceSearchParams(trimmedQuery, autoplayEnabled, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Search request failed unexpectedly.");
-      setResults([]);
-      setResultCount(0);
-      setTookMs(0);
-      setActiveVideoId(null);
-      setActiveSnippetId(null);
-      setAutoplayEnabled(false);
-      setManualAutoplaySelection(null);
-      replaceSearchParams(trimmedQuery, false, null, null);
-    } finally {
-      setIsLoading(false);
-    }
+    updateAutoplayEnabled(false);
   }
 
-  async function loadSelectedVideo(videoId: string, preferredSnippetId?: number | null): Promise<void> {
-    if (isLoading) {
+  async function loadResults(selection: SearchSelection): Promise<void> {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    lastRequestRef.current = selection;
+    const trimmedQuery = selection.query.trim();
+    const shared = !trimmedQuery && Boolean(selection.videoId);
+    setError(null);
+    setResults([]);
+    setResultCount(0);
+    setTookMs(0);
+    setActiveVideoId(null);
+    setActiveSnippetId(null);
+    setManualAutoplaySelection(null);
+    setHasSearched(Boolean(trimmedQuery || shared));
+    setIsLoading(false);
+    if (!trimmedQuery && !shared) return;
+    if (trimmedQuery && trimmedQuery.replace(/[^\p{L}\p{N}]/gu, "").length < 2) {
+      setError("Kirjoita vähintään kaksi kirjainta tai numeroa.");
       return;
     }
-
     setIsLoading(true);
-    setError(null);
-    setHasSearched(true);
-    setQuery("");
-    setManualAutoplaySelection(null);
+    const endpoint = shared
+      ? new URL(`/api/videos/${encodeURIComponent(selection.videoId!)}`, window.location.origin)
+      : new URL("/api/search", window.location.origin);
+    if (shared) {
+      if (selection.snippetId) endpoint.searchParams.set("snippet", selection.snippetId);
+      if (selection.timestamp != null) endpoint.searchParams.set("t", selection.timestamp);
+    } else endpoint.searchParams.set("q", trimmedQuery);
 
     try {
-      const endpoint = new URL(`/api/videos/${encodeURIComponent(videoId)}`, window.location.origin);
-
-      if (preferredSnippetId !== null && preferredSnippetId !== undefined) {
-        endpoint.searchParams.set("snippet", String(preferredSnippetId));
-      }
-
-      const response = await fetch(endpoint.toString(), {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
         cache: "no-store",
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
       });
-
       if (!response.ok) {
-        throw new Error(`Shared video request failed with status ${response.status}`);
+        setError(shared && response.status === 404
+          ? "Jaettua luikautusta ei löytynyt. Voit tehdä uuden haun."
+          : shared ? "Jaetun luikautuksen lataus ei onnistunut. Yritä uudelleen."
+          : response.status === 400 ? "Tarkista haku: kirjoita 2–200 merkkiä."
+          : "Haku ei onnistunut. Tarkista verkkoyhteys ja yritä uudelleen.");
+        return;
       }
-
       const payload = (await response.json()) as SearchResponse;
-      const nextActiveResult = payload.results[0] ?? null;
-      const nextActiveSnippet = nextActiveResult
-        ? preferredSnippetId !== null && preferredSnippetId !== undefined
-          ? (nextActiveResult.snippets.find((snippet) => snippet.chunkId === preferredSnippetId) ?? nextActiveResult.snippets[0] ?? null)
-          : (nextActiveResult.snippets[0] ?? null)
-        : null;
-
-      startTransition(() => {
-        setResults(payload.results);
-        setResultCount(payload.resultCount);
-        setTookMs(payload.tookMs);
-        setActiveVideoId(nextActiveResult?.videoId ?? null);
-        setActiveSnippetId(nextActiveSnippet?.chunkId ?? null);
-      });
-
-      replaceSearchParams("", true, nextActiveResult?.videoId ?? null, nextActiveSnippet?.chunkId ?? null);
+      if (controller.signal.aborted) return;
+      const nextResult = payload.results.find((result) => result.videoId === selection.videoId) ?? payload.results[0] ?? null;
+      const nextSnippet = nextResult?.snippets.find((snippet) => snippet.chunkId === selection.snippetId)
+        ?? nextResult?.snippets.find((snippet) => selection.timestamp != null && snippet.startMs === Number(selection.timestamp) * 1_000)
+        ?? nextResult?.snippets[0] ?? null;
+      setResults(payload.results);
+      setResultCount(payload.resultCount);
+      setTookMs(payload.tookMs);
+      setActiveVideoId(nextResult?.videoId ?? null);
+      setActiveSnippetId(nextSnippet?.chunkId ?? null);
+      if (!shared) replaceSearchParams(trimmedQuery, undefined, nextResult?.videoId ?? null, nextSnippet?.chunkId ?? null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Shared video request failed unexpectedly.");
-      setResults([]);
-      setResultCount(0);
-      setTookMs(0);
-      setActiveVideoId(null);
-      setActiveSnippetId(null);
-      setAutoplayEnabled(false);
-      setManualAutoplaySelection(null);
+      if (controller.signal.aborted) return;
+      setError(requestError instanceof Error && requestError.name === "TimeoutError"
+        ? "Haku kesti liian kauan. Yritä uudelleen."
+        : "Haku ei onnistunut. Tarkista verkkoyhteys ja yritä uudelleen.");
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    await runSearch(query, true);
+    replaceSearchParams(query, autoplayEnabled, null, null, true);
+    await loadResults({ query });
   }
 
   function selectVideo(result: SearchVideoResult, snippet?: SearchSnippet, options?: { playImmediately?: boolean }): void {
@@ -437,15 +353,6 @@ export function SearchExperience() {
     setActiveVideoId(result.videoId);
     setActiveSnippetId(nextSnippetId);
     replaceSearchParams(undefined, undefined, result.videoId, nextSnippetId);
-  }
-
-  function handleResultCardKeyDown(event: React.KeyboardEvent<HTMLElement>, result: SearchVideoResult): void {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    event.preventDefault();
-    selectVideo(result);
   }
 
   function setResultCardRef(videoId: string, node: HTMLElement | null): void {
@@ -487,16 +394,66 @@ export function SearchExperience() {
   return (
     <main className="page-shell">
       <section className="workspace-shell">
+        <section className="search-controls">
+          <form className="search-form" role="search" onSubmit={handleSubmit} aria-busy={isLoading}>
+            <label className="search-form__label" htmlFor="search-query">Etsi videoiden puheesta</label>
+            <div className="search-form__row search-form__row--stacked">
+              <input
+                id="search-query"
+                className="search-form__input"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="aamukahvi, pyöräily, tuju"
+                autoComplete="off"
+                maxLength={200}
+                enterKeyHint="search"
+                aria-describedby="search-hint"
+              />
+              <button className="search-form__button" type="submit" aria-label="Hae">
+                {isLoading ? <span className="search-form__spinner" aria-hidden="true" /> : "Hae"}
+              </button>
+            </div>
+            <p className="search-form__hint" id="search-hint">Kirjoita sana tai lause ja valitse osuman aikaleima.</p>
+          </form>
+
+          <div className="sidebar-panel__utility-row">
+            <div className="playback-controls">
+              <button
+                className={`autoplay-toggle${autoplayEnabled ? " autoplay-toggle--active" : ""}`}
+                type="button"
+                onClick={() => updateAutoplayEnabled(!autoplayEnabled)}
+                aria-pressed={autoplayEnabled}
+                disabled={!activeResult || !activeSnippet || results.length === 0}
+              >
+                {autoplayEnabled ? "Autoplay päällä" : "Autoplay pois"}
+              </button>
+            </div>
+            <a className="utility-link" href="/analytics">Arkiston tilastot</a>
+
+            {hasSearched && !isLoading && !error ? (
+              <div className="sidebar-panel__stats" role="status">
+                <span>{`${resultCount} videoust`}</span>
+                <span>{`${tookMs} ms`}</span>
+              </div>
+            ) : null}
+          </div>
+
+          {isLoading ? <p className="status-banner" role="status">{isSharedView ? "Ladataan jaettua luikautusta…" : "Haetaan osumia…"}</p> : null}
+          {error ? <div className="status-banner status-banner--error" role="alert"><p>{error}</p><button type="button" className="retry-button" onClick={() => lastRequestRef.current && void loadResults(lastRequestRef.current)}>Yritä uudelleen</button></div> : null}
+
+        </section>
+
         <section className="stage-panel">
           <div className="stage-bar stage-bar--top">
             <div className="stage-bar__header">
               <div className="stage-bar__meta">
                 <p className="stage-bar__eyebrow stage-bar__eyebrow--inline">{activeResult ? formatDate(activeResult.publishedAt) : "Hakutulokset"}</p>
-                {activeResult && activeSnippet ? (
+                {activeResult ? (
                   <div className="stage-bar__actions">
                     <a
                       className="stage-link"
-                      href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? activeSnippet.startSeconds}s`}
+                      href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? 0}s`}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -515,28 +472,30 @@ export function SearchExperience() {
                   </div>
                 ) : null}
               </div>
-              <h1>{activeResult?.title ?? (isSharedView ? "Jaettua luikautusta ei löytynyt" : "Valitse haku oikealta")}</h1>
+              <h1>{activeResult?.title ?? (isLoading ? "Ladataan…" : "Niilo22 Search")}</h1>
             </div>
           </div>
 
           <div className="stage-video-shell">
-            {activeResult && activeSnippet ? (
-              <iframe
-                key={`${activeResult.videoId}-${activeSnippet.chunkId}`}
-                className="stage-video"
-                src={withPlaybackWindow(activeResult.videoId, activeSnippet, shouldAutoplayActiveSelection)}
+            {activeResult ? (
+              <VideoPlayer
+                key={`${activeResult.videoId}-${activeSnippet?.chunkId ?? "full"}`}
+                src={activeSnippet ? withPlaybackWindow(activeResult.videoId, activeSnippet) : activeResult.primaryEmbedUrl}
                 title={activeResult.title}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
+                autoplay={shouldAutoplayActiveSelection}
+                onEnded={advancePlayback}
+                onUnavailable={() => setPlayerUnavailable(true)}
               />
             ) : (
               <div className="stage-empty">
-                <h2>{isSharedView ? "Jaettua luikautusta ei voitu avata." : "Kirjoita oikealle haku."}</h2>
+                <div><h2>{isLoading ? "Etsitään luikautusta…" : error ? "Kokeillaan uudelleen." : "Löydä tuttu luikautus."}</h2><p>Hae videoiden puheesta ja avaa oikea hetki.</p></div>
               </div>
             )}
           </div>
 
           <div className="stage-bar stage-bar--bottom">
+            {activeResult && !activeSnippet ? <p className="status-banner">Videolle ei ole puhetekstiosumia. Voit katsoa koko videon.</p> : null}
+            {playerUnavailable ? <p className="status-banner" role="status">Videota ei voitu toistaa tässä. Kokeile Avaa YouTubessa -linkkiä.</p> : null}
             <div className="stage-snippets">
               {activeResult?.snippets.map((snippet) => {
                 const isActive = snippet.chunkId === activeSnippet?.chunkId;
@@ -545,6 +504,7 @@ export function SearchExperience() {
                     key={snippet.chunkId}
                     type="button"
                     className={`stage-snippet${isActive ? " stage-snippet--active" : ""}`}
+                    aria-pressed={isActive}
                     onClick={() => selectVideo(activeResult, snippet)}
                   >
                     <span className="stage-snippet__time">{formatTimestamp(snippet.startSeconds)}</span>
@@ -556,72 +516,29 @@ export function SearchExperience() {
           </div>
         </section>
 
-        <aside className="sidebar-panel">
-          <form className="search-form" onSubmit={handleSubmit} aria-busy={isLoading}>
-            <div className="search-form__row search-form__row--stacked">
-              <input
-                id="search-query"
-                className="search-form__input"
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="aamukahvi, pyöräily, tuju"
-                autoComplete="off"
-              />
-              <button className="search-form__button" type="submit" disabled={isLoading} aria-label={isLoading ? "Haku käynnissä" : "Hae"}>
-                {isLoading ? <span className="search-form__spinner" aria-hidden="true" /> : "Hae"}
-              </button>
-            </div>
-          </form>
-
-          <div className="sidebar-panel__utility-row">
-            <div className="playback-controls">
-              <button
-                className={`autoplay-toggle${autoplayEnabled ? " autoplay-toggle--active" : ""}`}
-                type="button"
-                onClick={() => updateAutoplayEnabled(!autoplayEnabled)}
-                disabled={!activeResult || !activeSnippet || deferredResults.length === 0}
-              >
-                {autoplayEnabled ? "Autoplay päällä" : "Autoplay pois"}
-              </button>
-            </div>
-
-            {hasSearched ? (
-              <div className="sidebar-panel__stats">
-                <span>{`${resultCount} videoust`}</span>
-                <span>{`${tookMs} ms`}</span>
-              </div>
-            ) : null}
-          </div>
-
-          {error ? <p className="status-banner status-banner--error">{error}</p> : null}
-
+        <aside className="sidebar-panel" aria-label="Hakutulokset">
           <div className="results-rail-shell">
             <div className="results-rail">
-              {deferredResults.map((result) => {
+              {results.map((result) => {
                 const isActive = result.videoId === activeResult?.videoId;
                 return (
                   <article
                     key={result.videoId}
                     ref={(node) => setResultCardRef(result.videoId, node)}
                     className={`result-rail-card${isActive ? " result-rail-card--active" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={isActive}
-                    onClick={() => selectVideo(result)}
-                    onKeyDown={(event) => handleResultCardKeyDown(event, result)}
                   >
                     <div className="result-rail-card__header">
-                      <h3>{result.title}</h3>
+                      <h3><button type="button" className="result-rail-card__select" aria-pressed={isActive} onClick={() => selectVideo(result)}>{result.title}</button></h3>
                       <p className="result-rail-card__date">{formatDate(result.publishedAt)}</p>
                     </div>
 
                     <div className="result-rail-card__snippet-list">
-                      {result.snippets.slice(0, 3).map((snippet) => (
+                      {result.snippets.map((snippet) => (
                         <button
                           key={snippet.chunkId}
                           type="button"
                           className="result-rail-snippet"
+                          aria-pressed={isActive && snippet.chunkId === activeSnippet?.chunkId}
                           onClick={(event) => {
                             event.stopPropagation();
                             selectVideo(result, snippet);
@@ -636,7 +553,7 @@ export function SearchExperience() {
                 );
               })}
 
-              {!isLoading && hasSearched && deferredResults.length === 0 ? (
+              {!isLoading && !error && hasSearched && results.length === 0 ? (
                 <div className="empty-state empty-state--compact">
                   <h2>Ei osumia.</h2>
                   <p>Kokeile lyhyempää hakua tai eri kirjoitusasua.</p>

@@ -58,8 +58,8 @@ type AnalyticsResponse = {
 };
 
 export const metadata: Metadata = {
-  title: "Analytics",
-  description: "Aggregated search and transcript analytics for the Niilo22 archive.",
+  title: "Tilastot",
+  description: "Niilo22-arkiston haku- ja puhetekstitilastot.",
 };
 
 export const dynamic = "force-dynamic";
@@ -94,6 +94,7 @@ async function loadAnalytics(): Promise<AnalyticsResponse> {
     next: {
       revalidate: 120,
     },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok) {
@@ -133,7 +134,7 @@ function BarList({ items, emptyText }: { items: AnalyticsMetricEntry[]; emptyTex
 
 function YearlyActivityList({ items }: { items: AnalyticsYearEntry[] }) {
   if (items.length === 0) {
-    return <p className="analytics-empty">Yearly activity is not available yet.</p>;
+    return <p className="analytics-empty">Vuosittaisia tilastoja ei ole vielä saatavilla.</p>;
   }
 
   return (
@@ -141,8 +142,8 @@ function YearlyActivityList({ items }: { items: AnalyticsYearEntry[] }) {
       {items.map((item) => (
         <div className="analytics-year-row" role="listitem" key={item.year}>
           <strong>{item.year}</strong>
-          <span>{formatNumber(item.videoCount)} videos</span>
-          <span>{formatNumber(item.wordCount)} words</span>
+          <span>{formatNumber(item.videoCount)} videota</span>
+          <span>{formatNumber(item.wordCount)} sanaa</span>
           <span>{formatDecimal(item.transcriptHours)} h</span>
         </div>
       ))}
@@ -160,12 +161,30 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 }
 
 export default async function AnalyticsPage() {
-  const analytics = await loadAnalytics();
+  let analytics: AnalyticsResponse;
+  try {
+    analytics = await loadAnalytics();
+  } catch {
+    return (
+      <main className="page-shell analytics-page-shell">
+        <section className="status-banner analytics-hero">
+          <div className="analytics-hero__copy">
+            <h1>Tilastoja ei voitu ladata</h1>
+            <p>Tietopalvelu ei vastaa juuri nyt. Kokeile hetken kuluttua uudelleen.</p>
+          </div>
+          <div className="analytics-hero__actions">
+            <a className="stage-link" href="/analytics">Yritä uudelleen</a>
+            <a className="stage-link stage-link--share" href="/">Takaisin hakuun</a>
+          </div>
+        </section>
+      </main>
+    );
+  }
   const hasMeasuredSearches = analytics.summary.measuredTrackedQueries > 0;
   const coverageEntries = [
-    { label: "Ready", count: analytics.summary.readyVideos },
-    { label: "Ambient / no speech", count: analytics.summary.ambientVideos },
-    { label: "Missing", count: analytics.summary.missingVideos },
+    { label: "Puheteksti valmis", count: analytics.summary.readyVideos },
+    { label: "Ei puhetta", count: analytics.summary.ambientVideos },
+    { label: "Puheteksti puuttuu", count: analytics.summary.missingVideos },
   ];
   const transcriptVideoEntries = analytics.topTranscriptVideos.map((video) => ({
     key: video.videoId,
@@ -177,89 +196,89 @@ export default async function AnalyticsPage() {
     <main className="page-shell analytics-page-shell">
       <section className="status-banner analytics-hero">
         <div className="analytics-hero__copy">
-          <p className="stage-bar__eyebrow analytics-hero__eyebrow">Archive intelligence</p>
-          <h1>Analytics</h1>
-          <p className="analytics-hero__text">A lightweight view of search quality, transcript coverage, archive activity, and recurring language.</p>
+          <p className="stage-bar__eyebrow analytics-hero__eyebrow">Niilo22-arkisto</p>
+          <h1>Tilastot</h1>
+          <p className="analytics-hero__text">Hakujen osumat, puhetekstien kattavuus ja arkiston yleisimmät sanat ja ilmaukset.</p>
         </div>
         <div className="analytics-hero__actions">
           <a className="stage-link stage-link--share" href="/">
-            Back to search
+            Takaisin hakuun
           </a>
-          <span className="analytics-hero__stamp">Updated {formatUpdatedAt(analytics.summary.refreshedAt)}</span>
+          <span className="analytics-hero__stamp">Päivitetty {formatUpdatedAt(analytics.summary.refreshedAt)}</span>
         </div>
       </section>
 
       <section className="analytics-metrics-grid">
-        <MetricCard label="Videos" value={formatNumber(analytics.summary.totalVideos)} />
-        <MetricCard label="Transcript coverage" value={`${formatDecimal(analytics.summary.transcriptCoveragePercent)}%`} />
-        <MetricCard label="Approx. transcript hours" value={formatDecimal(analytics.summary.approximateTranscriptHours)} />
-        <MetricCard label="Transcript words" value={formatNumber(analytics.summary.totalTranscriptWords)} />
-        <MetricCard label="Avg. words / transcribed video" value={formatNumber(Math.round(analytics.summary.averageWordsPerTranscribedVideo))} />
-        <MetricCard label="Median words / transcribed video" value={formatNumber(Math.round(analytics.summary.medianWordsPerTranscribedVideo))} />
-        <MetricCard label="P90 words / transcribed video" value={formatNumber(Math.round(analytics.summary.p90WordsPerTranscribedVideo))} />
-        <MetricCard label="Transcript chunks" value={formatNumber(analytics.summary.totalTranscriptChunks)} />
-        <MetricCard label="Tracked searches" value={formatNumber(analytics.summary.totalTrackedQueries)} />
-        <MetricCard label="Unique tracked queries" value={formatNumber(analytics.summary.uniqueTrackedQueries)} />
-        <MetricCard label="Measured search success" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.searchSuccessRate)}%` : "—"} />
-        <MetricCard label="Zero-result searches" value={formatNumber(analytics.summary.zeroResultQueries)} />
-        <MetricCard label="Avg. results / search" value={hasMeasuredSearches ? formatDecimal(analytics.summary.averageSearchResultCount) : "—"} />
-        <MetricCard label="Avg. backend search time" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.averageSearchDurationMs)} ms` : "—"} />
-        <MetricCard label="Unique words" value={formatNumber(analytics.summary.uniqueWords)} />
-        <MetricCard label="Unique phrases" value={formatNumber(analytics.summary.uniqueBigrams + analytics.summary.uniqueTrigrams)} />
+        <MetricCard label="Videoita" value={formatNumber(analytics.summary.totalVideos)} />
+        <MetricCard label="Puhetekstien kattavuus" value={`${formatDecimal(analytics.summary.transcriptCoveragePercent)}%`} />
+        <MetricCard label="Puhetta noin (tuntia)" value={formatDecimal(analytics.summary.approximateTranscriptHours)} />
+        <MetricCard label="Sanoja puheteksteissä" value={formatNumber(analytics.summary.totalTranscriptWords)} />
+        <MetricCard label="Sanoja videossa keskimäärin" value={formatNumber(Math.round(analytics.summary.averageWordsPerTranscribedVideo))} />
+        <MetricCard label="Sanamäärän mediaani" value={formatNumber(Math.round(analytics.summary.medianWordsPerTranscribedVideo))} />
+        <MetricCard label="Sanamäärän 90. persentiili" value={formatNumber(Math.round(analytics.summary.p90WordsPerTranscribedVideo))} />
+        <MetricCard label="Puhetekstikatkelmia" value={formatNumber(analytics.summary.totalTranscriptChunks)} />
+        <MetricCard label="Hakuja yhteensä" value={formatNumber(analytics.summary.totalTrackedQueries)} />
+        <MetricCard label="Erilaisia hakuja" value={formatNumber(analytics.summary.uniqueTrackedQueries)} />
+        <MetricCard label="Osuman löytäneet haut" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.searchSuccessRate)}%` : "—"} />
+        <MetricCard label="Hakuja ilman osumia" value={formatNumber(analytics.summary.zeroResultQueries)} />
+        <MetricCard label="Tuloksia haussa keskimäärin" value={hasMeasuredSearches ? formatDecimal(analytics.summary.averageSearchResultCount) : "—"} />
+        <MetricCard label="Haun kesto keskimäärin" value={hasMeasuredSearches ? `${formatDecimal(analytics.summary.averageSearchDurationMs)} ms` : "—"} />
+        <MetricCard label="Erilaisia sanoja" value={formatNumber(analytics.summary.uniqueWords)} />
+        <MetricCard label="Erilaisia ilmauksia" value={formatNumber(analytics.summary.uniqueBigrams + analytics.summary.uniqueTrigrams)} />
       </section>
 
       <section className="analytics-grid">
         <article className="status-banner analytics-card analytics-card--wide">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Search quality</p>
-              <h2>Most common queries</h2>
+              <p className="analytics-card__eyebrow">Hakujen osumat</p>
+              <h2>Yleisimmät haut</h2>
             </div>
-            <p className="analytics-card__hint">Normalized queries, aggregated without storing user identities</p>
+            <p className="analytics-card__hint">Yhdenmukaistetut haut koottuna ilman käyttäjien tunnistetietoja</p>
           </div>
-          <BarList items={analytics.queries} emptyText="No tracked searches yet." />
+          <BarList items={analytics.queries} emptyText="Hakuja ei ole vielä tallennettu." />
         </article>
 
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Search quality</p>
-              <h2>Queries without results</h2>
+              <p className="analytics-card__eyebrow">Hakujen osumat</p>
+              <h2>Haut ilman osumia</h2>
             </div>
-            <p className="analytics-card__hint">Useful gaps in the searchable archive</p>
+            <p className="analytics-card__hint">Hakusanat, joille ei löytynyt vastaavaa puhetta</p>
           </div>
-          <BarList items={analytics.failedQueries} emptyText="No zero-result searches have been measured yet." />
+          <BarList items={analytics.failedQueries} emptyText="Kaikki tähän mennessä mitatut haut ovat löytäneet osumia." />
         </article>
 
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Corpus health</p>
-              <h2>Transcript coverage</h2>
+              <p className="analytics-card__eyebrow">Puhetekstit</p>
+              <h2>Puhetekstien kattavuus</h2>
             </div>
-            <p className="analytics-card__hint">Ready, ambient, and missing transcript states</p>
+            <p className="analytics-card__hint">Valmiit puhetekstit, puheettomat videot ja puuttuvat puhetekstit</p>
           </div>
-          <BarList items={coverageEntries} emptyText="Transcript status data is not available yet." />
+          <BarList items={coverageEntries} emptyText="Puhetekstien tilatietoja ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card analytics-card--wide">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Corpus health</p>
-              <h2>Largest transcripts</h2>
+              <p className="analytics-card__eyebrow">Puhetekstit</p>
+              <h2>Eniten puhetta</h2>
             </div>
-            <p className="analytics-card__hint">Videos ranked by transcript word count</p>
+            <p className="analytics-card__hint">Videot puhetekstin sanamäärän mukaan</p>
           </div>
-          <BarList items={transcriptVideoEntries} emptyText="Transcript size data is not available yet." />
+          <BarList items={transcriptVideoEntries} emptyText="Puhetekstien sanamääriä ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card analytics-card--wide">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Archive timeline</p>
-              <h2>Publication activity by year</h2>
+              <p className="analytics-card__eyebrow">Arkiston aikajana</p>
+              <h2>Julkaisut vuosittain</h2>
             </div>
-            <p className="analytics-card__hint">Published videos, transcript words, and approximate transcript hours</p>
+            <p className="analytics-card__hint">Julkaistut videot, puhetekstien sanamäärät ja puheen arvioitu kesto</p>
           </div>
           <YearlyActivityList items={analytics.yearlyActivity} />
         </article>
@@ -267,56 +286,56 @@ export default async function AnalyticsPage() {
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Corpus</p>
-              <h2>Top words</h2>
+              <p className="analytics-card__eyebrow">Puhetekstit</p>
+              <h2>Yleisimmät sanat</h2>
             </div>
-            <p className="analytics-card__hint">From normalized transcript chunks</p>
+            <p className="analytics-card__hint">Yhdenmukaistetuista puheteksteistä</p>
           </div>
-          <BarList items={analytics.words} emptyText="Word analytics are not available yet." />
+          <BarList items={analytics.words} emptyText="Sanatilastoja ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Sequences</p>
-              <h2>Top bigrams</h2>
+              <p className="analytics-card__eyebrow">Ilmaukset</p>
+              <h2>Yleisimmät sanaparit</h2>
             </div>
-            <p className="analytics-card__hint">Two-token phrases by occurrence count</p>
+            <p className="analytics-card__hint">Kahden sanan ilmaukset esiintymiskertojen mukaan</p>
           </div>
-          <BarList items={analytics.bigrams} emptyText="Bigram analytics are not available yet." />
+          <BarList items={analytics.bigrams} emptyText="Sanaparien tilastoja ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Sequences</p>
-              <h2>Top trigrams</h2>
+              <p className="analytics-card__eyebrow">Ilmaukset</p>
+              <h2>Yleisimmät kolmen sanan ilmaukset</h2>
             </div>
-            <p className="analytics-card__hint">Three-token phrases by occurrence count</p>
+            <p className="analytics-card__hint">Kolmen sanan ilmaukset esiintymiskertojen mukaan</p>
           </div>
-          <BarList items={analytics.trigrams} emptyText="Trigram analytics are not available yet." />
+          <BarList items={analytics.trigrams} emptyText="Kolmen sanan ilmausten tilastoja ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Distinctive language</p>
-              <h2>Distinctive bigrams</h2>
+              <p className="analytics-card__eyebrow">Tunnusomaiset ilmaukset</p>
+              <h2>Tunnusomaiset sanaparit</h2>
             </div>
-            <p className="analytics-card__hint">Repeated pairs ranked by association; bars show occurrences</p>
+            <p className="analytics-card__hint">Sanaparit sanojen yhteyden vahvuuden mukaan; palkit kuvaavat esiintymiskertoja</p>
           </div>
-          <BarList items={analytics.distinctiveBigrams} emptyText="No repeated distinctive bigrams are available yet." />
+          <BarList items={analytics.distinctiveBigrams} emptyText="Toistuvia tunnusomaisia sanapareja ei ole vielä saatavilla." />
         </article>
 
         <article className="status-banner analytics-card analytics-card--wide">
           <div className="analytics-card__header">
             <div>
-              <p className="analytics-card__eyebrow">Distinctive language</p>
-              <h2>Distinctive trigrams</h2>
+              <p className="analytics-card__eyebrow">Tunnusomaiset ilmaukset</p>
+              <h2>Tunnusomaiset kolmen sanan ilmaukset</h2>
             </div>
-            <p className="analytics-card__hint">Repeated three-word phrases ranked by association; bars show occurrences</p>
+            <p className="analytics-card__hint">Kolmen sanan ilmaukset sanojen yhteyden vahvuuden mukaan; palkit kuvaavat esiintymiskertoja</p>
           </div>
-          <BarList items={analytics.distinctiveTrigrams} emptyText="No repeated distinctive trigrams are available yet." />
+          <BarList items={analytics.distinctiveTrigrams} emptyText="Toistuvia tunnusomaisia kolmen sanan ilmauksia ei ole vielä saatavilla." />
         </article>
       </section>
     </main>

@@ -1,5 +1,5 @@
 export interface SearchSnippet {
-  chunkId: number;
+  chunkId: string;
   startMs: number;
   endMs: number;
   startSeconds: number;

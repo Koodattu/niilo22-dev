@@ -209,3 +209,5 @@ combined_words.txt
 deno.exe
 videos.json
 output.zip
+web/frontend/test-results/
+web/frontend/playwright-report/

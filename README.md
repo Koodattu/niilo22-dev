@@ -192,9 +192,9 @@ Install frontend and backend dependencies:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 cd ..\backend
-npm install
+npm ci
 ```
 
 Create local env files:
@@ -217,18 +217,14 @@ Backend local env:
 ```text
 HOST=0.0.0.0
 PORT=4000
-DATABASE_URL=postgresql://niilo22:niilo22@localhost:5432/niilo22
+DATABASE_URL=postgresql://niilo22:niilo22@localhost:55422/niilo22
 CORS_ORIGIN=http://localhost:3000
 VIDEOS_JSON_PATH=../../videos.json
 OUTPUT_DIR=../../output
 MIGRATION_PATH=../db/migrations
 ```
 
-If you started PostgreSQL with `web/docker-compose.dev.yml`, set the backend database URL to port `55422` unless your local environment maps PostgreSQL to `5432`:
-
-```text
-DATABASE_URL=postgresql://niilo22:niilo22@localhost:55422/niilo22
-```
+The backend development and import commands load `web/backend/.env` when present. Explicit process environment values take precedence. Keep the database port in sync with your local Docker binding.
 
 Import transcripts into PostgreSQL:
 
@@ -357,7 +353,7 @@ PostgreSQL stores imported data in two main areas:
 - `videos`: video metadata
 - `transcript_chunks`: timestamped transcript chunks
 
-Search combines PostgreSQL full-text search and trigram similarity. Results are grouped by video and returned with timestamped snippets so the UI can link directly to the relevant moment in a video.
+Web search uses PostgreSQL Finnish full-text search, with phrase matches preferred for multi-word queries. Results are grouped by video and returned with timestamped snippets. Fuzzy matching is available in the separate Python `search.py` tool.
 
 The backend also exposes:
 
@@ -377,6 +373,14 @@ These files and directories are produced or updated by the pipeline:
 - `outputs/` from fine-tuning experiments
 
 Some transcript files may be empty when a source video has no useful speech.
+
+Metadata and transcript JSON are replaced atomically after a complete write. An unreadable existing metadata file stops the downloader so it can be repaired or restored. Video IDs containing underscores are preserved in media and transcript filenames.
+
+## Regression Checks
+
+See [the verification workflow](work/goal-improvement/VERIFICATION.md) for a disposable PostgreSQL database, synthetic fixtures, backend and browser tests, and a bounded benchmark. These checks require their own database and must not use an existing archive. Python checks use temporary files and a synthetic transcription model, with no downloads or GPU inference.
+
+The [improvement work log](work/goal-improvement/STATE.md) records observed failures, verification, measurements and remaining limitations.
 
 ## Safety Notes
 

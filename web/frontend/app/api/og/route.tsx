@@ -102,7 +102,7 @@ function renderPreviewImage(requestPreview = getDefaultPreviewData()) {
               fontSize: 22,
             }}
           >
-            {requestPreview.videoId ? `youtube.com/watch?v=${requestPreview.videoId}` : "niilo22.dev"}
+            {requestPreview.videoId ? "YouTube" : "niilo22.dev"}
           </div>
         </div>
       </div>
@@ -153,7 +153,7 @@ function renderPreviewImage(requestPreview = getDefaultPreviewData()) {
               color: "rgba(255, 247, 235, 0.76)",
             }}
           >
-            Share preview
+            Jaettu luikautus
           </div>
         </div>
       </div>
@@ -171,7 +171,7 @@ export async function GET(request: Request) {
     const videoId = searchParams.get("result") ?? undefined;
     const snippetId = searchParams.get("snippet") ?? undefined;
     const query = searchParams.get("q") ?? undefined;
-    const preview = videoId ? ((await getSharedVideoPreviewData(videoId, snippetId)) ?? getDefaultPreviewData()) : query ? getQueryPreviewData(query) : getDefaultPreviewData();
+    const preview = videoId ? ((await getSharedVideoPreviewData(videoId, snippetId, searchParams.get("t") ?? undefined)) ?? getDefaultPreviewData()) : query ? getQueryPreviewData(query) : getDefaultPreviewData();
 
     return renderPreviewImage(preview);
   } catch {

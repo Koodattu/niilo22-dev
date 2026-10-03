@@ -14,7 +14,7 @@ export async function generateMetadata({ searchParams }: HomePageProps): Promise
   const sharedSnippetId = getSearchParamValue(resolvedSearchParams.snippet);
 
   if (sharedVideoId) {
-    const sharedPreview = await getSharedVideoPreviewData(sharedVideoId, sharedSnippetId);
+    const sharedPreview = await getSharedVideoPreviewData(sharedVideoId, sharedSnippetId, getSearchParamValue(resolvedSearchParams.t));
 
     if (sharedPreview) {
       return createPreviewMetadata(sharedPreview);

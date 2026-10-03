@@ -4,9 +4,10 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { recordSearchQuery } from "../lib/analytics.js";
 import { loadSharedVideo, searchVideos } from "../lib/search.js";
+import { normalizeSearchText } from "../lib/normalize.js";
 
 const searchQuerySchema = z.object({
-  q: z.string().trim().min(1, "Query is required"),
+  q: z.string().trim().min(2).max(200).refine((value) => normalizeSearchText(value).replace(/\s/g, "").length >= 2, "Query needs at least two letters or digits"),
   limit: z.coerce.number().int().min(1).max(25).optional(),
 });
 
@@ -15,7 +16,8 @@ const sharedVideoParamsSchema = z.object({
 });
 
 const sharedVideoQuerySchema = z.object({
-  snippet: z.coerce.number().int().positive().optional(),
+  snippet: z.string().refine((value) => /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n, "Invalid snippet id").optional(),
+  t: z.coerce.number().min(0).max(2_147_483).optional(),
 });
 
 export async function registerSearchRoute(app: FastifyInstance): Promise<void> {
@@ -54,7 +56,7 @@ export async function registerSearchRoute(app: FastifyInstance): Promise<void> {
       };
     }
 
-    const response = await loadSharedVideo(parsedParams.data.videoId, parsedQuery.data.snippet ?? null);
+    const response = await loadSharedVideo(parsedParams.data.videoId, parsedQuery.data.snippet ?? null, parsedQuery.data.t ?? null);
 
     if (!response) {
       reply.code(404);

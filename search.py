@@ -4,6 +4,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from rapidfuzz import fuzz
 from tqdm import tqdm
+from pipeline_files import parse_video_filename
 
 def format_time(seconds):
     """
@@ -22,23 +23,7 @@ def extract_video_info(filename):
     - unixtimestamp_uploaddate__videoid_videoname.json (double underscore variant)
     Example: 1222079676_20080922_PLHlE5YN3LE_Joulua Odotellessa.json
     """
-    basename = os.path.splitext(filename)[0]  # Remove .json extension
-    parts = basename.split('_')
-
-    # Handle both single and double underscore between date and videoid
-    # After splitting, an empty string appears where there were consecutive underscores
-    if len(parts) < 4:
-        return None, None  # Invalid format
-
-    # Filter out empty strings from double underscores
-    parts = [p for p in parts if p]
-
-    if len(parts) < 3:
-        return None, None  # Invalid format after filtering
-
-    youtube_id = parts[2]
-    video_name = '_'.join(parts[3:]) if len(parts) > 3 else ''  # In case video name contains underscores
-    return youtube_id, video_name
+    return parse_video_filename(filename)
 
 def process_file(json_file, output_folder, search_word, threshold):
     """

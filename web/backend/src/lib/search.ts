@@ -12,7 +12,7 @@ interface TopVideoRow {
 }
 
 interface ChunkRow {
-  chunk_id: number;
+  chunk_id: string;
   video_id: string;
   title: string;
   published_at: string;
@@ -32,14 +32,14 @@ interface VideoRow {
 }
 
 interface VideoSnippetRow {
-  chunk_id: number;
+  chunk_id: string;
   start_ms: number;
   end_ms: number;
   text: string;
 }
 
 export interface SearchSnippet {
-  chunkId: number;
+  chunkId: string;
   startMs: number;
   endMs: number;
   startSeconds: number;
@@ -365,7 +365,7 @@ async function executeSearch(rawQuery: string, normalizedQuery: string, limit: n
   };
 }
 
-export async function loadSharedVideo(videoId: string, snippetId: number | null = null): Promise<SearchResponse | null> {
+export async function loadSharedVideo(videoId: string, snippetId: string | null = null, startSeconds: number | null = null): Promise<SearchResponse | null> {
   const startedAt = performance.now();
   const normalizedVideoId = videoId.trim();
 
@@ -393,7 +393,19 @@ export async function loadSharedVideo(videoId: string, snippetId: number | null 
 
   let snippet: SearchSnippet | null = null;
 
-  if (snippetId !== null) {
+  // A timestamp remains meaningful when an import replaces database chunk IDs.
+  if (startSeconds !== null) {
+    const { rows } = await query<VideoSnippetRow>(`
+      SELECT id AS chunk_id, start_ms, end_ms, text
+      FROM transcript_chunks
+      WHERE video_id = $1
+      ORDER BY ABS(start_ms::bigint - $2::bigint), start_ms ASC, id ASC
+      LIMIT 1
+    `, [normalizedVideoId, Math.round(startSeconds * 1_000)]);
+    if (rows[0]) snippet = buildSnippet(normalizedVideoId, rows[0], 0);
+  }
+
+  if (!snippet && snippetId !== null) {
     const selectedSnippetSql = `
       SELECT
         c.id AS chunk_id,
@@ -500,6 +512,7 @@ export async function searchVideos(rawQuery: string, limit = config.searchResult
       tookMs: roundDuration(startedAt),
     };
   } finally {
-    inFlightSearches.delete(cacheKey);
+    // An import may have started a newer request for this key while this one ran.
+    if (inFlightSearches.get(cacheKey) === searchPromise) inFlightSearches.delete(cacheKey);
   }
 }

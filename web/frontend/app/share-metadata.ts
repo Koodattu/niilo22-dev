@@ -5,6 +5,7 @@ type SearchParamValue = string | string[] | undefined;
 interface ShareSnippet {
   chunkId: number | string;
   startSeconds: number;
+  startMs: number;
   endSeconds: number;
   text: string;
 }
@@ -36,7 +37,7 @@ export interface PreviewCardData {
 }
 
 export const SITE_NAME = "Niilo22 Search";
-export const DEFAULT_DESCRIPTION = "Search Niilo22 videos by transcript, phrases, and fuzzy matches.";
+export const DEFAULT_DESCRIPTION = "Etsi Niilo22-videoiden puheesta sanoja ja lauseita ja avaa oikea hetki.";
 export const DEFAULT_OG_IMAGE_PATH = "/api/og";
 export const OG_IMAGE_SIZE = {
   width: 1200,
@@ -131,9 +132,9 @@ export function getDefaultPreviewData(): PreviewCardData {
     description: DEFAULT_DESCRIPTION,
     urlPath: "/",
     imagePath: DEFAULT_OG_IMAGE_PATH,
-    imageAlt: "Niilo22 Search preview image",
-    kicker: "Transcript search",
-    snippetText: "Search Niilo22 videos by transcript, phrases, and fuzzy matches.",
+    imageAlt: "Niilo22 Searchin esikatselukuva",
+    kicker: "Haku puheteksteistä",
+    snippetText: DEFAULT_DESCRIPTION,
   };
 }
 
@@ -148,18 +149,19 @@ export function getQueryPreviewData(rawQuery: string): PreviewCardData {
     description: `Etsi Niilo22-videoista hakusanalla \"${query}\".`,
     urlPath: `/?${urlParams.toString()}`,
     imagePath: `${DEFAULT_OG_IMAGE_PATH}?${urlParams.toString()}`,
-    imageAlt: `Niilo22 Search results preview for ${query}`,
-    kicker: "Search preview",
+    imageAlt: `Haun ${query} esikatselukuva`,
+    kicker: "Haun esikatselu",
     snippetText: `Hakusana: ${query}`,
   };
 }
 
-export async function getSharedVideoPreviewData(videoId: string, snippetId?: string): Promise<PreviewCardData | null> {
+export async function getSharedVideoPreviewData(videoId: string, snippetId?: string, timestamp?: string): Promise<PreviewCardData | null> {
   const endpoint = new URL(`/api/videos/${encodeURIComponent(videoId)}`, getBackendBaseUrl());
 
   if (snippetId) {
     endpoint.searchParams.set("snippet", snippetId);
   }
+  if (timestamp !== undefined) endpoint.searchParams.set("t", timestamp);
 
   let response: Response;
 
@@ -172,6 +174,7 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
       next: {
         revalidate: 300,
       },
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return null;
@@ -181,10 +184,15 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
     return null;
   }
 
-  const payload = (await response.json()) as SearchResponseLike;
-  const result = payload.results[0];
+  let payload: SearchResponseLike;
+  try {
+    payload = (await response.json()) as SearchResponseLike;
+  } catch {
+    return null;
+  }
+  const result = payload?.results?.[0];
 
-  if (!result) {
+  if (!result || !Array.isArray(result.snippets)) {
     return null;
   }
 
@@ -203,6 +211,10 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
     shareParams.set("snippet", selectedSnippetId);
     imageParams.set("snippet", selectedSnippetId);
   }
+  if (selectedSnippet) {
+    shareParams.set("t", String(selectedSnippet.startMs / 1_000));
+    imageParams.set("t", String(selectedSnippet.startMs / 1_000));
+  }
 
   const publishedLabel = formatPublishedLabel(result.publishedAt);
   const timestampLabel = selectedSnippet ? formatTimestamp(selectedSnippet.startSeconds) : "Katso osuma";
@@ -216,7 +228,7 @@ export async function getSharedVideoPreviewData(videoId: string, snippetId?: str
     description,
     urlPath: `/?${shareParams.toString()}`,
     imagePath: `${DEFAULT_OG_IMAGE_PATH}?${imageParams.toString()}`,
-    imageAlt: `${result.title} preview image`,
+    imageAlt: `${result.title} – esikatselukuva`,
     kicker: `${publishedLabel} · ${timestampLabel}`,
     snippetText: truncateText(selectedSnippet?.text ?? result.title, 180),
     videoId: result.videoId,

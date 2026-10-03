@@ -3,12 +3,13 @@ import { sep } from "node:path";
 import { createHash } from "node:crypto";
 
 import type { PoolClient } from "pg";
+import { z } from "zod";
 
 import { config } from "../src/config.js";
 import { pool, withTransaction } from "../src/db.js";
 import { refreshAnalyticsSnapshot } from "../src/lib/analytics.js";
 import { ensureSchema } from "../src/lib/ensure-schema.js";
-import { createTranscriptChunks, type TranscriptWord } from "../src/lib/chunk-transcript.js";
+import { createTranscriptChunks } from "../src/lib/chunk-transcript.js";
 import { normalizeSearchText } from "../src/lib/normalize.js";
 import { writeSearchDataVersion } from "../src/lib/search-data-version.js";
 
@@ -19,16 +20,24 @@ interface VideoItem {
   downloaded?: boolean;
 }
 
-interface VideosFile {
-  lastUpdated: string;
-  videos: VideoItem[];
-}
+const videosFileSchema = z.object({
+  videos: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+    name: z.string().min(1),
+    publishedAt: z.iso.datetime({ offset: true }),
+    downloaded: z.boolean().optional(),
+  })).refine((videos) => new Set(videos.map((video) => video.id)).size === videos.length, "Duplicate video IDs"),
+});
 
-interface TranscriptFile {
-  file_name?: string;
-  youtube_id?: string;
-  words?: TranscriptWord[];
-}
+const transcriptSchema = z.object({
+  file_name: z.string().optional(),
+  words: z.array(z.object({
+    word: z.string(),
+    start: z.number().min(0).max(2_147_483),
+    end: z.number().min(0).max(2_147_483),
+  }).refine((word) => word.end >= word.start, "Word ends before it starts"))
+    .refine((words) => words.every((word, index) => index === 0 || word.start >= words[index - 1]!.start), "Words are not chronological"),
+});
 
 interface TranscriptLocation {
   filePath: Buffer;
@@ -51,36 +60,16 @@ function extractYoutubeId(filename: Buffer | string): string | null {
     return null;
   }
 
-  const baseName = filenameBuffer.subarray(0, filenameBuffer.length - jsonSuffix.length);
-  const parts: Buffer[] = [];
-  let sliceStart = 0;
-
-  for (let index = 0; index < baseName.length; index += 1) {
-    if (baseName[index] !== 0x5f) {
-      continue;
-    }
-
-    if (index > sliceStart) {
-      parts.push(baseName.subarray(sliceStart, index));
-    }
-
-    sliceStart = index + 1;
-  }
-
-  if (sliceStart < baseName.length) {
-    parts.push(baseName.subarray(sliceStart));
-  }
-
-  if (parts.length < 3) {
-    return null;
-  }
-
-  return parts[2]?.toString("utf8") ?? null;
+  // IDs themselves may contain underscores; only the timestamp and date are delimited.
+  const name = filenameBuffer.toString("utf8");
+  return name.match(/^[^_]+_[^_]+_([A-Za-z0-9_-]{11})(?:_|\.json$)/)?.[1]
+    ?? name.match(/^[^_]+_[^_]+__([A-Za-z0-9_-]{11})(?:_|\.json$)/)?.[1]
+    ?? null;
 }
 
-async function readVideosFile(): Promise<VideosFile> {
+async function readVideosFile(): Promise<z.infer<typeof videosFileSchema>> {
   const raw = await readFile(config.videosJsonPath, "utf8");
-  return JSON.parse(raw) as VideosFile;
+  return videosFileSchema.parse(JSON.parse(raw));
 }
 
 async function buildTranscriptIndex(): Promise<Map<string, TranscriptLocation>> {
@@ -256,7 +245,11 @@ async function importAllVideos(): Promise<void> {
       continue;
     }
 
-    const transcript = transcriptRaw === null ? null : (JSON.parse(transcriptRaw) as TranscriptFile);
+    const parsedTranscript = transcriptRaw === null ? null : transcriptSchema.safeParse(JSON.parse(transcriptRaw));
+    if (parsedTranscript && !parsedTranscript.success) {
+      throw new Error(`Invalid transcript for video ${video.id}; existing data for this video was preserved. Check words and chronological timestamps.`);
+    }
+    const transcript = parsedTranscript?.success ? parsedTranscript.data : null;
     const words = transcript?.words ?? [];
     const chunks = createTranscriptChunks(words);
     const transcriptStatus = transcriptLocation ? (words.length > 0 ? "ready" : "ambient") : "missing";
@@ -265,6 +258,7 @@ async function importAllVideos(): Promise<void> {
     await withTransaction(async (client) => {
       await upsertVideo(client, video, words.length, transcriptStatus, localFileName, sourceSignature);
       await replaceChunks(client, video.id, chunks);
+      await writeSearchDataVersion(client);
     });
 
     processed += 1;
@@ -278,15 +272,14 @@ async function importAllVideos(): Promise<void> {
   const removedVideoIds = [...importedVideoSignatures.keys()].filter((videoId) => !currentVideoIds.has(videoId));
 
   if (removedVideoIds.length > 0) {
-    await pool.query("DELETE FROM videos WHERE youtube_id = ANY($1::text[])", [removedVideoIds]);
+    await withTransaction(async (client) => {
+      await client.query("DELETE FROM videos WHERE youtube_id = ANY($1::text[])", [removedVideoIds]);
+      await writeSearchDataVersion(client);
+    });
   }
 
   const sourceSignature = datasetHash.digest("hex");
   await writeImportState(sourceSignature, videosFile.videos.length, transcriptIndex.size);
-
-  if (processed > 0 || removedVideoIds.length > 0) {
-    await writeSearchDataVersion();
-  }
 
   console.log("Refreshing analytics snapshot");
   const analyticsRefreshed = await refreshAnalyticsSnapshot(sourceSignature);

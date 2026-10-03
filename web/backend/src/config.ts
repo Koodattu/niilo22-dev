@@ -1,8 +1,9 @@
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sourceDir = dirname(fileURLToPath(import.meta.url));
-const backendRoot = resolve(sourceDir, "..");
+// Source runs from src/, compiled startup from dist/src/.
+const backendRoot = resolve(sourceDir, basename(dirname(sourceDir)) === "dist" ? "../.." : "..");
 const webRoot = resolve(backendRoot, "..");
 const repoRoot = resolve(webRoot, "..");
 
@@ -26,7 +27,6 @@ export const config = {
   searchResultLimit: numberFromEnv(process.env.SEARCH_RESULT_LIMIT, 20),
   snippetLimitPerVideo: numberFromEnv(process.env.SNIPPET_LIMIT_PER_VIDEO, 4),
   searchCacheMaxEntries: numberFromEnv(process.env.SEARCH_CACHE_MAX_ENTRIES, 250),
-  searchDataVersionPath: process.env.SEARCH_DATA_VERSION_PATH ?? resolve(backendRoot, ".cache", "search-data-version.txt"),
 };
 
 export function getCorsOrigins(): true | string[] {
