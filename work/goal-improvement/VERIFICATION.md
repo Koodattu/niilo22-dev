@@ -84,4 +84,4 @@ Stop both app terminals with Ctrl+C, then remove only the container created abov
 docker rm -f niilo22-local-tests
 ```
 
-Review tracked and new files with `git status --short`, `git diff`, and the new tests/migration listed by status. Nothing in this work was committed or published. See [STATE.md](STATE.md) for measured outcomes and [REVIEW.md](REVIEW.md) for remaining limitations and migration considerations.
+Review changes with `git status --short`, `git diff`, and `git log --oneline`. The initial local work was subsequently committed/pushed at the user's request, followed by the dependency security update. See [STATE.md](STATE.md) for measured outcomes and [REVIEW.md](REVIEW.md) for remaining limitations and migration considerations.
