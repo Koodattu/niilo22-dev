@@ -158,10 +158,8 @@ export function VideoPlayer({ src, title, videoId, autoplay, endSeconds, subtitl
   return (
     <div className="video-player">
       <div className="stage-video-host" ref={hostRef} />
-      <div className="video-player__footer">
-        {loading ? <p className="video-loading" role="status"><span className="video-loading__spinner" aria-hidden="true" />Ladataan videota…</p> : null}
-        {subtitles && ready ? <VideoSubtitles videoId={videoId} timeSeconds={timeSeconds} hidden={loading} /> : null}
-      </div>
+      {loading ? <p className="video-loading" role="status"><span className="video-loading__spinner" aria-hidden="true" />Ladataan videota…</p> : null}
+      {subtitles && ready ? <VideoSubtitles videoId={videoId} timeSeconds={timeSeconds} hidden={loading} /> : null}
     </div>
   );
 }

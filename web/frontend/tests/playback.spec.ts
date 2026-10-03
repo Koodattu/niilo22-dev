@@ -100,24 +100,46 @@ test("enabling autoplay after a clip finishes advances to the next distant hit",
   await expect(page.locator(".stage-video")).toHaveAttribute("src", /start=27(?:&|$)/);
 });
 
-test("subtitles and loading feedback fit desktop and mobile without covering the iframe", async ({ page }) => {
+test("subtitles overlay the video above its controls and loading is centered inside it", async ({ page }) => {
   await page.goto("/?q=luikautus&autoplay=1");
   await setVideoTime(page, 577.45);
   await expect(page.locator(".video-subtitle__word--spoken")).toHaveText("luikautus");
   await expect(page.frameLocator(".stage-video").getByText("Synteettinen testivideo")).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: "../../work/playback-subtitles/evidence/desktop-subtitles.png" });
-  for (const width of [390, 320]) {
-    await page.setViewportSize({ width, height: 844 });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     const frame = await page.locator(".stage-video").boundingBox();
     const caption = await page.getByLabel("Videon tekstitys").boundingBox();
+    const player = await page.locator(".video-player").boundingBox();
     expect(frame!.height).toBeGreaterThanOrEqual(200);
-    expect(caption!.y).toBeGreaterThanOrEqual(frame!.y + frame!.height);
+    expect(caption!.y).toBeGreaterThan(frame!.y);
+    expect(caption!.y + caption!.height).toBeLessThanOrEqual(frame!.y + frame!.height - 44);
+    expect(caption!.x).toBeGreaterThanOrEqual(frame!.x);
+    expect(caption!.x + caption!.width).toBeLessThanOrEqual(frame!.x + frame!.width);
+    expect(Math.abs(player!.height - frame!.height)).toBeLessThan(1);
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.matches("iframe.stage-video"), {
+      x: caption!.x + caption!.width / 2, y: caption!.y + caption!.height / 2,
+    })).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    if (width === 390) await page.screenshot({ path: "../../work/playback-subtitles/evidence/mobile-subtitles.png", fullPage: true });
+    if (width !== 320) await page.screenshot({ path: `../../work/player-overlays/evidence/${width === 1440 ? "desktop" : "mobile"}-subtitles.png`, fullPage: true });
   }
+  await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+  const scaledFrame = await page.locator(".stage-video").boundingBox();
+  const scaledCaption = await page.getByLabel("Videon tekstitys").boundingBox();
+  expect(scaledCaption!.y).toBeGreaterThanOrEqual(scaledFrame!.y);
+  expect(scaledCaption!.y + scaledCaption!.height).toBeLessThanOrEqual(scaledFrame!.y + scaledFrame!.height - 44);
+  await page.locator(".video-player").screenshot({ path: "../../work/player-overlays/evidence/mobile-subtitles-scaled.png" });
+  await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
+  await page.locator(".video-player").scrollIntoViewIfNeeded();
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await setVideoTime(page, 577.45, 3);
   await expect(page.locator(".video-loading__spinner")).toHaveCSS("animation-name", "search-button-spin");
-  await page.screenshot({ path: "../../work/playback-subtitles/evidence/mobile-loading.png", fullPage: true });
+  const frame = await page.locator(".stage-video").boundingBox();
+  const spinner = await page.locator(".video-loading__spinner").boundingBox();
+  expect(Math.abs(spinner!.x + spinner!.width / 2 - frame!.x - frame!.width / 2)).toBeLessThan(2);
+  expect(Math.abs(spinner!.y + spinner!.height / 2 - frame!.y - frame!.height / 2)).toBeLessThan(40);
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.matches("iframe.stage-video"), {
+    x: spinner!.x + spinner!.width / 2, y: spinner!.y + spinner!.height / 2,
+  })).toBe(true);
+  await page.screenshot({ path: "../../work/player-overlays/evidence/mobile-loading.png", fullPage: true });
 });
