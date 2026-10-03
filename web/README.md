@@ -156,6 +156,14 @@ Migration `007_search_data_revision.sql` adds one revision row. Each changed-vid
 
 Normal startup applies pending migrations. No existing rows are rewritten. Leave the additive table in place if rolling application code back; old processes still use their previous cache mechanism. `SEARCH_DATA_VERSION_PATH` is unused by the new code; existing deployment settings were not changed. Coordinate API/importer versions during rollout because an old importer does not update the new revision row.
 
+## Playback and subtitles
+
+Autoplay keeps nearby hits as separate results but plays continuously when their padded playback windows overlap. Selection follows the YouTube playhead; distant hits still start a new clip. Pauses, buffering and seeks do not advance by elapsed wall time.
+
+`GET /api/videos/:videoId/transcript?start=27&end=87` returns `{ videoId, startMs, endMs, words: [{ word, startMs, endMs }] }` from existing stored word timestamps. Request bounds are seconds, span at most 120 seconds, and must satisfy `0 <= start < end <= 2147483`. Words overlapping the requested half-open range are returned in time order. A known video without speech in that range returns an empty array; a missing video returns 404. The same path is proxied by the frontend. No reimport or migration is required.
+
+Subtitles show short phrases with the spoken word highlighted. The toggle hides them without restarting playback. Subtitles and subtle loading feedback sit just below the iframe, inside the player shell, to comply with [YouTube's overlay requirements](https://developers.google.com/youtube/terms/required-minimum-functionality#overlays-and-frames). They are not visible inside YouTube's native fullscreen or picture-in-picture view. Timing depends on the stored transcript alignment and available player API; if the API cannot load, native playback and the YouTube link remain available, but automatic clip boundaries and subtitles are unavailable.
+
 ## Regression checks
 
 Follow [the verification workflow](../work/goal-improvement/VERIFICATION.md) for isolated PostgreSQL setup, synthetic fixtures, builds, browser tests, benchmarks and cleanup. Tests and seeding must use a dedicated disposable database. The [work log](../work/goal-improvement/STATE.md) and [coverage review](../work/goal-improvement/REVIEW.md) record verified scenarios and deferred findings.

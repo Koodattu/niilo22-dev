@@ -82,14 +82,25 @@ async function copyTextToClipboard(value: string): Promise<void> {
 }
 
 function withPlaybackWindow(videoId: string, snippet: SearchSnippet): string {
-  const { startSeconds, endSeconds } = getPlaybackWindow(snippet);
+  const { startSeconds } = getPlaybackWindow(snippet);
   const url = new URL(`https://www.youtube.com/embed/${videoId}`);
 
   url.searchParams.set("start", String(startSeconds));
-  url.searchParams.set("end", String(endSeconds));
+  // The player API enforces a movable end boundary without reloading nearby hits.
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("rel", "0");
   return url.toString();
+}
+
+function continuousSnippets(snippets: SearchSnippet[], first: SearchSnippet): SearchSnippet[] {
+  const run = [first];
+  let endSeconds = getPlaybackWindow(first).endSeconds;
+  for (const next of snippets.slice(snippets.findIndex(snippet => snippet.chunkId === first.chunkId) + 1)) {
+    if (next.startMs <= run.at(-1)!.startMs || getPlaybackWindow(next).startSeconds > endSeconds) break;
+    run.push(next);
+    endSeconds = Math.max(endSeconds, getPlaybackWindow(next).endSeconds);
+  }
+  return run;
 }
 
 function getPlaybackWindow(snippet: SearchSnippet): { startSeconds: number; endSeconds: number } {
@@ -119,6 +130,8 @@ export function SearchExperience() {
   const [error, setError] = useState<string | null>(null);
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSnippetId, setActiveSnippetId] = useState<string | null>(null);
+  const [playbackSnippetId, setPlaybackSnippetId] = useState<string | null>(null);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [autoplayEnabled, setAutoplayEnabled] = useState(initialAutoplayEnabled);
   const [manualAutoplaySelection, setManualAutoplaySelection] = useState<{ videoId: string; snippetId: string | null } | null>(null);
   const [shareFeedback, setShareFeedback] = useState<ShareFeedbackState>("idle");
@@ -130,6 +143,12 @@ export function SearchExperience() {
 
   const activeResult = results.find((result) => result.videoId === activeVideoId) ?? results[0] ?? null;
   const activeSnippet = activeResult ? (activeResult.snippets.find((snippet) => snippet.chunkId === activeSnippetId) ?? activeResult.snippets[0] ?? null) : null;
+  const playbackSnippet = activeResult?.snippets.find(snippet => snippet.chunkId === playbackSnippetId) ?? activeSnippet;
+  const playbackRun = useMemo(() => activeResult && playbackSnippet ? continuousSnippets(activeResult.snippets, playbackSnippet) : [], [activeResult, playbackSnippet]);
+  const lastPlaybackSnippet = autoplayEnabled ? playbackRun.at(-1) ?? activeSnippet : activeSnippet;
+  const playbackEndSeconds = autoplayEnabled && playbackRun.length
+    ? Math.max(...playbackRun.map(snippet => getPlaybackWindow(snippet).endSeconds))
+    : activeSnippet ? getPlaybackWindow(activeSnippet).endSeconds : null;
   const shouldAutoplayActiveSelection =
     autoplayEnabled ||
     (manualAutoplaySelection !== null && manualAutoplaySelection.videoId === activeResult?.videoId && manualAutoplaySelection.snippetId === (activeSnippet?.chunkId ?? null));
@@ -253,7 +272,7 @@ export function SearchExperience() {
     }
 
     const currentVideoIndex = results.findIndex((result) => result.videoId === activeResult.videoId);
-    const currentSnippetIndex = activeResult.snippets.findIndex((snippet) => snippet.chunkId === activeSnippet.chunkId);
+    const currentSnippetIndex = activeResult.snippets.findIndex((snippet) => snippet.chunkId === lastPlaybackSnippet?.chunkId);
 
     if (currentVideoIndex === -1 || currentSnippetIndex === -1) {
       return;
@@ -272,6 +291,17 @@ export function SearchExperience() {
     updateAutoplayEnabled(false);
   }
 
+  function followPlayback(timeSeconds: number): void {
+    // Consume a manual play request once the player reports its playhead.
+    if (manualAutoplaySelection) setManualAutoplaySelection(null);
+    if (!autoplayEnabled || !activeResult || playbackRun.length < 2) return;
+    const current = playbackRun.findLast(snippet => snippet.startMs <= timeSeconds * 1000) ?? playbackRun[0];
+    if (current.chunkId !== activeSnippet?.chunkId) {
+      setActiveSnippetId(current.chunkId);
+      replaceSearchParams(undefined, undefined, activeResult.videoId, current.chunkId);
+    }
+  }
+
   async function loadResults(selection: SearchSelection): Promise<void> {
     requestRef.current?.abort();
     const controller = new AbortController();
@@ -285,6 +315,7 @@ export function SearchExperience() {
     setTookMs(0);
     setActiveVideoId(null);
     setActiveSnippetId(null);
+    setPlaybackSnippetId(null);
     setManualAutoplaySelection(null);
     setHasSearched(Boolean(trimmedQuery || shared));
     setIsLoading(false);
@@ -327,6 +358,7 @@ export function SearchExperience() {
       setTookMs(payload.tookMs);
       setActiveVideoId(nextResult?.videoId ?? null);
       setActiveSnippetId(nextSnippet?.chunkId ?? null);
+      setPlaybackSnippetId(nextSnippet?.chunkId ?? null);
       if (!shared) replaceSearchParams(trimmedQuery, undefined, nextResult?.videoId ?? null, nextSnippet?.chunkId ?? null);
     } catch (requestError) {
       if (controller.signal.aborted) return;
@@ -352,6 +384,7 @@ export function SearchExperience() {
 
     setActiveVideoId(result.videoId);
     setActiveSnippetId(nextSnippetId);
+    setPlaybackSnippetId(nextSnippetId);
     replaceSearchParams(undefined, undefined, result.videoId, nextSnippetId);
   }
 
@@ -451,6 +484,9 @@ export function SearchExperience() {
                 <p className="stage-bar__eyebrow stage-bar__eyebrow--inline">{activeResult ? formatDate(activeResult.publishedAt) : "Hakutulokset"}</p>
                 {activeResult ? (
                   <div className="stage-bar__actions">
+                    <button className="stage-link" type="button" aria-pressed={subtitlesEnabled} onClick={() => setSubtitlesEnabled(enabled => !enabled)}>
+                      {subtitlesEnabled ? "Tekstitys päällä" : "Tekstitys pois"}
+                    </button>
                     <a
                       className="stage-link"
                       href={`https://www.youtube.com/watch?v=${activeResult.videoId}&t=${playbackWindow?.startSeconds ?? 0}s`}
@@ -479,10 +515,14 @@ export function SearchExperience() {
           <div className="stage-video-shell">
             {activeResult ? (
               <VideoPlayer
-                key={`${activeResult.videoId}-${activeSnippet?.chunkId ?? "full"}`}
-                src={activeSnippet ? withPlaybackWindow(activeResult.videoId, activeSnippet) : activeResult.primaryEmbedUrl}
+                key={`${activeResult.videoId}-${playbackSnippet?.chunkId ?? "full"}`}
+                src={playbackSnippet ? withPlaybackWindow(activeResult.videoId, playbackSnippet) : activeResult.primaryEmbedUrl}
                 title={activeResult.title}
+                videoId={activeResult.videoId}
                 autoplay={shouldAutoplayActiveSelection}
+                endSeconds={playbackEndSeconds}
+                subtitles={subtitlesEnabled}
+                onTimeUpdate={followPlayback}
                 onEnded={advancePlayback}
                 onUnavailable={() => setPlayerUnavailable(true)}
               />

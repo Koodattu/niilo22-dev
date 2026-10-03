@@ -37,10 +37,15 @@ export async function createFixture() {
     "Vielä aamukahvi ennen kuin lopetetaan tämän päivän mukavat tarinat tähän paikkaan.",
   ];
   const words = lines.flatMap((line, lineIndex) => line.split(" ").map((word, index) => ({ word, start: lineIndex * 30 + index * 0.4, end: lineIndex * 30 + index * 0.4 + 0.3 })));
+  const nearbyWords = [
+    { start: 572, line: "Luikautus kuuluu täällä kun kävellään tänään ulkona tässä tutussa mukavassa paikassa." },
+    { start: 577, line: "Toinen luikautus kuuluu kun jatketaan tästä rauhassa kohti seuraavaa tuttua mutkaa." },
+    { start: 620, line: "Kolmas luikautus kuuluu kun saavutaan tästä rauhassa kohti seuraavaa tuttua paikkaa." },
+  ].flatMap(({ start, line }) => line.split(" ").map((word, index) => ({ word, start: start + index * 0.4, end: start + index * 0.4 + 0.3 })));
   await writeFile(videosPath, JSON.stringify({ videos }));
   for (const [index, video] of videos.entries()) {
     await writeFile(join(outputDir, `1700000000_20231114_${video.id}_fixture.json`), JSON.stringify({
-      youtube_id: video.id, file_name: `${video.id}.mp3`, words: index === 2 ? [] : words,
+      youtube_id: video.id, file_name: `${video.id}.mp3`, words: index === 2 ? [] : index === 0 ? [...words, ...nearbyWords] : words,
     }));
   }
   return {

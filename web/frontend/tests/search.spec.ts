@@ -1,24 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { installYouTubeDouble } from "./youtube";
 
 test.beforeEach(async ({ page }) => {
-  // The app and database are real. Only the external video host is replaced.
-  await page.route("https://www.youtube.com/embed/**", route => route.fulfill({
-    contentType: "text/html", body: '<body style="background:#211915;color:#f4eee4;font:18px sans-serif;display:grid;place-items:center;height:90vh">Synteettinen testivideo</body>',
-  }));
-  await page.route("https://www.youtube.com/iframe_api", route => route.fulfill({
-    contentType: "application/javascript",
-    body: `window.YT = { Player: class {
-      constructor(frame, options) {
-        this.frame = frame;
-        this.listener = e => options.events.onStateChange({ data: e.detail });
-        window.addEventListener('test-player-state', this.listener);
-        queueMicrotask(() => options.events.onReady?.({ target: this }));
-      }
-      destroy() { window.removeEventListener('test-player-state', this.listener); this.frame.remove(); }
-      playVideo() {} pauseVideo() {}
-    }}; window.onYouTubeIframeAPIReady?.();`,
-  }));
+  await installYouTubeDouble(page);
 });
 
 test("keyboard selects the requested timestamp", async ({ page }) => {
