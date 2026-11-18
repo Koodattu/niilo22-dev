@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=26.13.1
 
-FROM node:${NODE_VERSION}-alpine3.23 AS base
+FROM node:${NODE_VERSION}-alpine3.24 AS base
 
 FROM base AS deps
 WORKDIR /app

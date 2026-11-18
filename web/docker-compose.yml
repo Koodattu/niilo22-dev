@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17.10-alpine3.23
+    image: postgres:17.12-alpine3.24
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-niilo22}

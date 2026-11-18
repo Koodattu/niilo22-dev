@@ -36,7 +36,7 @@ npm ci
 - `frontend/.env.example` -> `frontend/.env.local`
 - `backend/.env.example` -> `backend/.env`
 
-Backend `dev` and `import:data` load `.env` when present (Node 24); explicit environment values take precedence. Check the database target before importing: the importer removes records absent from its input `videos.json`.
+Backend `dev` and `import:data` load `.env` when present (Node 26); explicit environment values take precedence. Check the database target before importing: the importer removes records absent from its input `videos.json`.
 
 4. Import transcripts into PostgreSQL:
 

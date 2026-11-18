@@ -1,6 +1,6 @@
 # Reproduce the local checks
 
-Use Node 24, npm lockfiles, Docker, and a dedicated disposable PostgreSQL database. These commands are for PowerShell from the repository root unless otherwise stated. Install declared dependencies with `npm ci` in `web/backend` and `web/frontend` first.
+Use Node 26, npm lockfiles, Docker, and a dedicated disposable PostgreSQL database. These commands are for PowerShell from the repository root unless otherwise stated. Install declared dependencies with `npm ci` in `web/backend` and `web/frontend` first.
 
 **Tests and seeds remove videos absent from their synthetic fixture files. Never point them at an existing archive.** The test guard requires localhost and a database name ending in `_test`; that is an extra check, not permission to use an existing database.
 
@@ -8,7 +8,7 @@ Use Node 24, npm lockfiles, Docker, and a dedicated disposable PostgreSQL databa
 
 ```powershell
 $testRepoRoot = (Get-Location).Path
-docker run --detach --rm --name niilo22-local-tests --cpus=2 --memory=512m --tmpfs /var/lib/postgresql/data --publish 127.0.0.1::5432 -e POSTGRES_USER=goal_test -e POSTGRES_PASSWORD=local_test_only -e POSTGRES_DB=niilo22_local_test postgres:17.10-alpine3.23
+docker run --detach --rm --name niilo22-local-tests --cpus=2 --memory=512m --tmpfs /var/lib/postgresql/data --publish 127.0.0.1::5432 -e POSTGRES_USER=goal_test -e POSTGRES_PASSWORD=local_test_only -e POSTGRES_DB=niilo22_local_test postgres:17.12-alpine3.24
 $testPgPort = (docker port niilo22-local-tests 5432/tcp).Split(':')[-1]
 $env:TEST_DATABASE_URL = "postgresql://goal_test:local_test_only@127.0.0.1:${testPgPort}/niilo22_local_test"
 docker exec niilo22-local-tests pg_isready -U goal_test -d niilo22_local_test

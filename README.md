@@ -46,14 +46,14 @@ The project turns Niilo22 videos into timestamped, searchable transcript data:
 
 For the root data pipeline:
 
-- Python environment with the packages in `requirements.txt`
+- Python 3.11+ environment with the packages in `requirements.txt`
 - YouTube Data API key for metadata fetching
 - `yt-dlp` available in the repo root or on `PATH`
 - CUDA-capable setup for the default transcription workflow
 
 For the web application:
 
-- Node.js 24 LTS and npm for local frontend/backend development
+- Node.js 26 LTS and npm for local frontend/backend development
 - Docker Compose for the PostgreSQL development database or full production-style stack
 - Existing `videos.json` and `output/*.json` data when importing transcripts
 
@@ -81,7 +81,7 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-The transcription dependency set is GPU-oriented. PyTorch packages use the CUDA 12.4 wheel index and are pinned to a mutually compatible release set. The default `transcribe.py` configuration uses `device="cuda"` and `compute_type="float16"`.
+The GPU setup uses the CUDA 12.6 builds of PyTorch 2.14.1 and TorchVision 0.29.1. PyTorch 2.14 is the last series with CUDA 12 wheels and is compatible with the fine-tuning script's Unsloth dependency. The default `transcribe.py` configuration uses `device="cuda"` and `compute_type="float16"`.
 
 ## Download Videos
 
