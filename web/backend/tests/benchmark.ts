@@ -30,5 +30,13 @@ try {
     durations.push(performance.now() - start);
   }
   durations.sort((a, b) => a - b);
-  console.log(JSON.stringify({ workload: "400 videos / 24,000 chunks / 2,400 matching chunks; PostgreSQL 17.10, 2 CPUs, 512 MiB; 30 sequential searches", cache: process.argv.includes("--cold") ? "disabled (warm database)" : "warm after one cold request", initialMs: initial.tookMs, medianMs: durations[15], p95Ms: durations[28] }, null, 2));
+  const version = await pool.query<{ server_version: string }>("SHOW server_version");
+  console.log(JSON.stringify({
+    workload: "400 videos / 24,000 chunks / 2,400 matching chunks / 30 sequential searches",
+    postgresVersion: version.rows[0]?.server_version,
+    cache: process.argv.includes("--cold") ? "disabled (warm database)" : "warm after one cold request",
+    initialMs: initial.tookMs,
+    medianMs: durations[15],
+    p95Ms: durations[28],
+  }, null, 2));
 } finally { await pool.end(); }
